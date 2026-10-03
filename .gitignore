@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+env/
+venv/
+
+# Personal study vault (keep placeholder + starter lesson_notes.md)
+notes/*/
+notes/index.json
+!notes/.gitkeep
+!notes/lesson_notes.md
+
+# Ephemeral session artifacts
+state/quiz.json
+state/answer.json
+state/pause.flag
+state/verification.json
+state/state.json
+state/cache/*
+!state/cache/.gitkeep
+
+# Reference corpora (user-supplied; may be copyrighted)
+references/raw/*
+!references/raw/.gitkeep
+references/processed/*
+!references/processed/.gitkeep
+references/.manifest.json
+references/index.json
+references/tags.json
+
+# Dev / OS
+session_state.json
+*.tmp
+scratch/
+notes_backup/
+AIStartupGuide.md
+.DS_Store
+Thumbs.db

@@ -1,0 +1,8 @@
+references/raw/**
+references/processed/**
+state/cache/**
+__pycache__/
+*.pyc
+.venv/
+env/
+*.tmp

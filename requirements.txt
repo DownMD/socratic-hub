@@ -1,0 +1,10 @@
+# Runtime (server.py)
+fastapi>=0.100.0
+uvicorn>=0.22.0
+pydantic>=2.0.0
+
+# Reference ingestion (scripts/ingest_references.py)
+pypdf>=3.0.0
+
+# NOTE: bridge.py, scripts/locate_text.py, scripts/scan_prior_knowledge.py and
+# scripts/sync_vault_index.py rely solely on the Python standard library.

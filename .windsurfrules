@@ -1,0 +1,15 @@
+# Socratic Hub: Windsurf rules
+<!-- Source of truth: AGENTS.md. On any conflict, AGENTS.md wins. Repair via INIT.md. -->
+
+## State sync (file-driven persistence)
+- All state lives on disk: `state/topic.json`, `state/curriculum.json`, `state/knowledge_graph.json`, `state/roadmap.mmd`, `state/quiz.json`, `state/answer.json`. Re-read them at the start of every turn. Never rely on conversation memory.
+- Write JSON atomically (write a temp file, then replace). The FastAPI server watches `state/` on its own.
+- Sync graph changes with one `POST http://localhost:8000/api/graph/sync`. Use `python -c` with `urllib.request`, not PowerShell or curl.
+- `python bridge.py advance-node` stdout is the authoritative progress state. On exit code 0, author the next node immediately.
+- Persist each lesson to BOTH `notes/lesson_notes.md` (append-only) and `notes/<topic>/<node_id>.md`.
+
+## Boundaries
+- Work only in `state/` and `notes/` plus scripts and docs named in `AGENTS.md`.
+- Do not modify `server.py`, `bridge.py`, or `static/*` during teaching.
+- Chat carries only the whitelisted status templates. Lessons and quizzes live on disk.
+- Triggers: `.teach .resume .stop .kill .start .open .doc .gem .refer`. Read `AGENTS.md` for the full state machine.

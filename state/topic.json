@@ -1,0 +1,10 @@
+{
+  "topic": "",
+  "phase": "idle",
+  "active_node_id": null,
+  "active_node": null,
+  "reference_scope": {
+    "collection": "general",
+    "tags": []
+  }
+}
