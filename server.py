@@ -47,6 +47,59 @@ DEFAULT_STATE: Dict[str, Any] = {
     "reference_scope": None
 }
 
+DEFAULT_TOPIC_SKELETON: Dict[str, Any] = {
+    "topic": "",
+    "phase": "idle",
+    "active_node_id": None,
+    "active_node": None,
+    "reference_scope": {"collection": "general", "tags": []}
+}
+
+DEFAULT_CURRICULUM_SKELETON: Dict[str, Any] = {
+    "topic": "",
+    "nodes": []
+}
+
+DEFAULT_KNOWLEDGE_GRAPH_SKELETON: Dict[str, Any] = {
+    "nodes": [],
+    "links": []
+}
+
+DEFAULT_ROADMAP_SKELETON: str = """graph TD
+  classDef completed stroke:#22c55e,stroke-width:2px;
+  classDef active stroke:#38bdf8,stroke-width:3px;
+  classDef pending stroke:#475569,stroke-width:1px;
+  classDef mastered stroke:#22c55e,stroke-width:2px;
+"""
+
+DEFAULT_LESSON_NOTES_PLACEHOLDER: str = "<!-- Active lesson notes will appear here -->\n"
+
+
+def ensure_state_skeletons() -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    NOTES_DIR.mkdir(parents=True, exist_ok=True)
+
+    if not TOPIC_FILE.exists() or TOPIC_FILE.stat().st_size == 0 or not TOPIC_FILE.read_text(encoding="utf-8").strip():
+        with open(TOPIC_FILE, "w", encoding="utf-8") as f:
+            json.dump(DEFAULT_TOPIC_SKELETON, f, indent=2)
+
+    if not CURRICULUM_FILE.exists() or CURRICULUM_FILE.stat().st_size == 0 or not CURRICULUM_FILE.read_text(encoding="utf-8").strip():
+        with open(CURRICULUM_FILE, "w", encoding="utf-8") as f:
+            json.dump(DEFAULT_CURRICULUM_SKELETON, f, indent=2)
+
+    if not KNOWLEDGE_GRAPH_FILE.exists() or KNOWLEDGE_GRAPH_FILE.stat().st_size == 0 or not KNOWLEDGE_GRAPH_FILE.read_text(encoding="utf-8").strip():
+        with open(KNOWLEDGE_GRAPH_FILE, "w", encoding="utf-8") as f:
+            json.dump(DEFAULT_KNOWLEDGE_GRAPH_SKELETON, f, indent=2)
+
+    if not ROADMAP_FILE.exists() or ROADMAP_FILE.stat().st_size == 0 or not ROADMAP_FILE.read_text(encoding="utf-8").strip():
+        with open(ROADMAP_FILE, "w", encoding="utf-8") as f:
+            f.write(DEFAULT_ROADMAP_SKELETON)
+
+    if not NOTES_FILE.exists() or NOTES_FILE.stat().st_size == 0 or not NOTES_FILE.read_text(encoding="utf-8").strip():
+        with open(NOTES_FILE, "w", encoding="utf-8") as f:
+            f.write(DEFAULT_LESSON_NOTES_PLACEHOLDER)
+
+
 
 def safe_replace(src: Path, dst: Path, max_retries: int = 5) -> None:
     for attempt in range(max_retries):
@@ -205,17 +258,18 @@ def parse_frontmatter(content: str) -> Dict[str, Any]:
 
 def load_knowledge_graph() -> Dict[str, Any]:
     if not KNOWLEDGE_GRAPH_FILE.exists():
-        return {"nodes": [], "edges": []}
+        return {"nodes": [], "edges": [], "links": []}
     try:
         with open(KNOWLEDGE_GRAPH_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
             if not isinstance(data, dict):
-                return {"nodes": [], "edges": []}
+                return {"nodes": [], "edges": [], "links": []}
             data.setdefault("nodes", [])
             data.setdefault("edges", [])
+            data.setdefault("links", [])
             return data
     except Exception:
-        return {"nodes": [], "edges": []}
+        return {"nodes": [], "edges": [], "links": []}
 
 
 def save_knowledge_graph(kg: Dict[str, Any]) -> None:
@@ -548,7 +602,8 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup_flush_buffers():
-    """Purge quiz_history and latest_answer on startup to prevent stale answer replays."""
+    """Purge quiz_history and latest_answer on startup and ensure state skeletons."""
+    ensure_state_skeletons()
     state = load_state()
     state["quiz_history"] = []
     state["latest_answer"] = None
@@ -1629,7 +1684,7 @@ def load_topic(req: TopicRequest) -> Dict[str, Any]:
     if QUIZ_FILE.exists():
         try:
             with open(QUIZ_FILE, "w", encoding="utf-8") as f:
-                f.write("")
+                json.dump({"questions": []}, f, indent=2)
         except Exception:
             pass
 
@@ -1873,7 +1928,7 @@ def restore_topic(req: RestoreRequest) -> Dict[str, Any]:
     if QUIZ_FILE.exists():
         try:
             with open(QUIZ_FILE, "w", encoding="utf-8") as f:
-                f.write("")
+                json.dump({"questions": []}, f, indent=2)
         except Exception:
             pass
 
@@ -1930,30 +1985,51 @@ def reset_state() -> Dict[str, Any]:
     if QUIZ_FILE.exists():
         try:
             with open(QUIZ_FILE, "w", encoding="utf-8") as f:
-                f.write("")
+                json.dump({"questions": []}, f, indent=2)
         except Exception:
             pass
 
-    # Clear state/roadmap.mmd
-    if ROADMAP_FILE.exists():
-        try:
-            with open(ROADMAP_FILE, "w", encoding="utf-8") as f:
-                f.write("")
-        except Exception:
-            pass
+    # Reset state/roadmap.mmd with valid default Mermaid class definition headers
+    ROADMAP_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(ROADMAP_FILE, "w", encoding="utf-8") as f:
+            f.write(DEFAULT_ROADMAP_SKELETON)
+    except Exception:
+        pass
 
-    # Clear notes/lesson_notes.md
-    if NOTES_FILE.exists():
-        try:
-            with open(NOTES_FILE, "w", encoding="utf-8") as f:
-                f.write("")
-        except Exception:
-            pass
+    # Reset notes/lesson_notes.md with initial placeholder/comment
+    NOTES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(NOTES_FILE, "w", encoding="utf-8") as f:
+            f.write(DEFAULT_LESSON_NOTES_PLACEHOLDER)
+    except Exception:
+        pass
 
-    # Set topic and phase to blank / idle in state/topic.json
+    # Write state/topic.json with valid initial skeleton structure
     TOPIC_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(TOPIC_FILE, "w", encoding="utf-8") as f:
-        json.dump({"topic": "", "phase": "idle"}, f, indent=2)
+        json.dump(DEFAULT_TOPIC_SKELETON, f, indent=2)
+
+    # Write state/curriculum.json with valid initial skeleton structure
+    CURRICULUM_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(CURRICULUM_FILE, "w", encoding="utf-8") as f:
+        json.dump(DEFAULT_CURRICULUM_SKELETON, f, indent=2)
+
+    # Write state/knowledge_graph.json if missing or cleared
+    KNOWLEDGE_GRAPH_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if not KNOWLEDGE_GRAPH_FILE.exists() or KNOWLEDGE_GRAPH_FILE.stat().st_size == 0:
+        with open(KNOWLEDGE_GRAPH_FILE, "w", encoding="utf-8") as f:
+            json.dump(DEFAULT_KNOWLEDGE_GRAPH_SKELETON, f, indent=2)
+    else:
+        try:
+            with open(KNOWLEDGE_GRAPH_FILE, "r", encoding="utf-8") as f:
+                kg_data = json.load(f)
+            if not kg_data.get("nodes"):
+                with open(KNOWLEDGE_GRAPH_FILE, "w", encoding="utf-8") as f:
+                    json.dump(DEFAULT_KNOWLEDGE_GRAPH_SKELETON, f, indent=2)
+        except Exception:
+            with open(KNOWLEDGE_GRAPH_FILE, "w", encoding="utf-8") as f:
+                json.dump(DEFAULT_KNOWLEDGE_GRAPH_SKELETON, f, indent=2)
 
     # Overwrite state/state.json with clean blank idle structure
     blank_state = {

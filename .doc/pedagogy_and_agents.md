@@ -21,7 +21,7 @@ The agent implements a **Socratic 1-on-1 pedagogical loop** with four phases:
 
 ### Multi-Track Prerequisite Partitioning
 
-Before writing any diagnostic questions, the agent decomposes the topic into its **distinct parallel prerequisite tracks** (e.g., for JLPT N5: phonological morphology track vs. particle-syntax track). Each track is probed independently — never collapsed into a single linear ladder.
+Before writing any diagnostic questions, the agent decomposes the topic into its **distinct parallel prerequisite tracks** (e.g., for `<Topic Name>`: foundational track vs. applied mechanics track). Each track is probed independently — never collapsed into a single linear ladder.
 
 ### Diagnostic Tiers
 
@@ -55,7 +55,7 @@ Budget = clamp(3, 2 × [number of prerequisite tracks], 8)
 
 ### Universal Domain Depth
 
-The agent generates **12 to 25+ granular nodes** regardless of local reference corpora. The current JLPT N5 curriculum has 15 nodes across 2 parallel tracks (particle-syntax and verbal inflection).
+The agent generates **12 to 25+ granular nodes** regardless of local reference corpora. A representative curriculum for `<Topic Name>` may have 12–25+ nodes across parallel tracks.
 
 ### Adaptive Topology Selection
 

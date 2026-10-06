@@ -11,9 +11,10 @@ import os
 import shutil
 import subprocess
 import sys
+import unittest
 from pathlib import Path
 
-WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
+WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
 VERIFIER_MD = WORKSPACE_ROOT / ".agents" / "agents" / "verifier.md"
 STATE_DIR = WORKSPACE_ROOT / "state"
 CACHE_DIR = STATE_DIR / "cache"
@@ -209,23 +210,26 @@ def test_cache_directory_and_protocol() -> bool:
     return True
 
 
+class TestStep5(unittest.TestCase):
+    def test_verifier_tools(self):
+        self.assertTrue(test_verifier_tools())
+
+    def test_quiz_shuffling(self):
+        self.assertTrue(test_quiz_shuffling())
+
+    def test_cache_directory_and_protocol(self):
+        self.assertTrue(test_cache_directory_and_protocol())
+
+
 def main():
     print("=" * 60)
     print("STEP 5 ARCHITECTURAL VERIFICATION SUITE")
     print("=" * 60)
 
-    ok1 = test_verifier_tools()
-    ok2 = test_quiz_shuffling()
-    ok3 = test_cache_directory_and_protocol()
-
-    print("\n" + "=" * 60)
-    if ok1 and ok2 and ok3:
-        print("[PASS] ALL ARCHITECTURAL TESTS COMPLETED SUCCESSFULLY.")
-        print("=" * 60)
-        sys.exit(0)
-    else:
-        print("[FAIL] ONE OR MORE TESTS FAILED.")
-        print("=" * 60)
+    suite = unittest.TestLoader().loadTestsFromTestCase(TestStep5)
+    runner = unittest.TextTestRunner(verbosity=2)
+    result = runner.run(suite)
+    if not result.wasSuccessful():
         sys.exit(1)
 
 

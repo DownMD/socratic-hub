@@ -85,13 +85,13 @@ GraphSyncRequest     # nodes: List[Dict], edges: List[Dict]
 
 ```json
 {
-  "topic": "JLPT N5 Grammar & Syntax",
+  "topic": "<Topic Name>",
   "phase": "idle | probing | teaching | PAUSED | completed",
-  "active_node_id": "node-2-directional-temporal-particles | null",
-  "active_node": "Directional, Temporal & Comitative Markers | null",
+  "active_node_id": "<Node ID> | null",
+  "active_node": "<Node Title> | null",
   "reference_scope": {
-    "collection": "general",
-    "tags": ["japanese", "linguistics"]
+    "collection": "<Collection Name>",
+    "tags": ["<tag-1>", "<tag-2>"]
   }
 }
 ```
@@ -102,9 +102,9 @@ GraphSyncRequest     # nodes: List[Dict], edges: List[Dict]
 {
   "nodes": [
     {
-      "id": "node-1-core-case-particles",
-      "title": "Core Case Particles: Accusative (Wo) and Dative-Locative (Ni, De)",
-      "prerequisites": ["wa-ga-case-morphosyntax"],
+      "id": "<Node ID>",
+      "title": "<Node Title>",
+      "prerequisites": ["<Prerequisite Node ID>"],
       "status": "completed | active | pending | mastered",
       "description": "...",
       "badge_label": "Curriculum Mastered | In Progress | Active Lesson"
@@ -117,7 +117,7 @@ GraphSyncRequest     # nodes: List[Dict], edges: List[Dict]
 
 ```json
 {
-  "node_id": "node-2-directional-temporal-particles",
+  "node_id": "<Node ID>",
   "questions": [
     {
       "id": "q1",
@@ -154,7 +154,7 @@ GraphSyncRequest     # nodes: List[Dict], edges: List[Dict]
 
 ```json
 {
-  "concept": "Directional Temporal & Comitative Markers",
+  "concept": "<Node Title>",
   "status": "[VERIFIED] | [VERIFIED_WEB]",
   "source_type": "local_textbook | authoritative_canon",
   "document_title": "...",
@@ -174,16 +174,16 @@ GraphSyncRequest     # nodes: List[Dict], edges: List[Dict]
 {
   "nodes": [
     {
-      "id": "core-case-particles",
-      "label": "Core Case Particles",
+      "id": "<Node ID>",
+      "label": "<Node Title>",
       "status": "mastered | active | planned",
-      "topics": ["JLPT N5 Grammar & Syntax"],
+      "topics": ["<Topic Name>"],
       "origin": "diagnostic | curriculum",
       "badge_label": "Baseline Knowledge | Curriculum Mastered | Active Lesson"
     }
   ],
   "edges": [
-    { "source": "wa-ga-case-morphosyntax", "target": "core-case-particles", "relation": "prerequisite" }
+    { "source": "<Prerequisite Node ID>", "target": "<Node ID>", "relation": "prerequisite" }
   ]
 }
 ```

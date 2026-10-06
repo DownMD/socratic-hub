@@ -17,10 +17,10 @@ flowchart TD
   classDef pending stroke:#475569,stroke-width:1px;
   classDef mastered stroke:#22c55e,stroke-width:2px;
 
-  R1["wa-ga-case-morphosyntax"]:::mastered
-  N1["Core Case Particles: Wo, Ni, De"]:::completed
-  N2["Directional, Temporal & Comitative Markers: E, Kara, Made, To"]:::active
-  N3["Nominal Conjunctions & Particle Coordination: No, Ya, Ka, Mo"]:::pending
+  R1["<Baseline Concept>"]:::mastered
+  N1["<Node 1 Title>"]:::completed
+  N2["<Node 2 Title>"]:::active
+  N3["<Node 3 Title>"]:::pending
 
   R1 --> N1
   N1 --> N2
@@ -63,9 +63,9 @@ The update is done via regex substitution on the raw `.mmd` text — no Mermaid 
 {
   "nodes": [
     {
-      "id": "node-2-directional-temporal-particles",
-      "title": "Directional, Temporal & Comitative Markers: E, Kara, Made, To",
-      "prerequisites": ["node-1-core-case-particles"],
+      "id": "<Node ID>",
+      "title": "<Node Title>",
+      "prerequisites": ["<Prerequisite Node ID>"],
       "status": "active",
       "description": "...",
       "badge_label": "In Progress"
@@ -156,8 +156,8 @@ Used everywhere IDs need to be compared across sources:
 ```
 
 Examples:
-- `"Node 2: Directional, Temporal & Comitative Markers"` → `"directional-temporal-comitative-markers"`
-- `"Baseline: WA/GA Case Morphosyntax"` → `"wa-ga-case-morphosyntax"`
+- `"Node 2: <Node Title>"` → `"<node-id>"`
+- `"Baseline: <Baseline Title>"` → `"<baseline-id>"`
 
 ---
 
@@ -200,21 +200,21 @@ After every node pass, `advance-node` automatically extracts and archives the no
 
 ```yaml
 ---
-id: node-2-directional-temporal-particles
-title: Directional, Temporal & Comitative Markers: E, Kara, Made, To
-topic: JLPT N5 Grammar & Syntax
-domain: linguistics
+id: <Node ID>
+title: <Node Title>
+topic: <Topic Name>
+domain: <Domain>
 aliases:
-  - directional temporal comitative markers
+  - <Node Title Alias>
 core_mechanism: Standard operational definition of ...
 prerequisites:
-  - "[[node-1-core-case-particles]]"
+  - "[[<Prerequisite Node ID>]]"
 verification_status: "[VERIFIED_WEB]"
 citation: "Standard Reference Canon"
 page_range: "N/A"
 ---
 
-# Directional, Temporal & Comitative Markers
+# <Node Title>
 
 > [!success] Curriculum Mastery
 > Mastered through interactive Socratic instruction and verified via checkpoint quiz.
