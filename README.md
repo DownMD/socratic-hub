@@ -28,28 +28,23 @@ Learners cannot simply skim or skip ahead: mastery must be demonstrated through 
 
 ## Engine in Action
 
-> 📸 **Screenshot Directory:** Place your interface captures in the [`assets/`](assets/) directory using the filenames referenced below.
-
 ### 1. Interactive Roadmap & Knowledge Graph
 Visualize topological dependencies, completed milestones, and pending concept tracks in real time via Mermaid DAGs and the interactive 2D Knowledge Cosmos.
 <p align="center">
   <img src="assets/roadmap-preview.png" alt="Curriculum Traversal & Roadmap" width="850">
 </p>
-*Figure 1: Adaptive curriculum graph showing prerequisite roots, active learning frontier, and mastered knowledge branches.*
 
 ### 2. Socratic Probing & Active Recall Dialogue
 Engage in focused, step-by-step Socratic dialogue where every lesson demands active synthesis rather than passive absorption.
 <p align="center">
   <img src="assets/socratic-session.png" alt="Active Recall Dialogue Session" width="850">
 </p>
-*Figure 2: Active recall dialogue session delivering bite-sized lesson scaffolding followed by targeted comprehension checks.*
 
 ### 3. Live Verification & Mastery State
 Multi-tier diagnostic gates and lookahead academic audits verify concept retention and textbook rigor before advancing.
 <p align="center">
   <img src="assets/verification-flow.png" alt="Automated State & Node Verification" width="850">
 </p>
-*Figure 3: Real-time mastery evaluation, automated state transitions, and background verifier audits.*
 
 ---
 
