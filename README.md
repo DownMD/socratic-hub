@@ -1,80 +1,224 @@
+# Socratic Hub: Alvar Method Implementation & Learning Engine
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python Version](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
+[![Tests](https://img.shields.io/badge/Tests-Passing-brightgreen.svg)](scripts/tests/)
+[![Architecture](https://img.shields.io/badge/Architecture-Decoupled%20%26%20Stateful-orange.svg)](#architecture--specifications)
+[![Pedagogy](https://img.shields.io/badge/Pedagogy-Alvar%20Method-purple.svg)](#core-tenets--alvar-method-operationalization)
+
 > **Quick AI Agent Setup**  
-> Paste this single prompt into your IDE agent (Cursor, Claude Code, Antigravity, or Windsurf) in an empty folder:
+> Paste this single prompt into your IDE agent (Antigravity, Cursor, Claude Code, or Windsurf) in an empty folder:
 > ```text
 > Clone https://github.com/DownMD/socratic-hub into this empty workspace, then read and execute INIT.md to set up the learning hub for this IDE.
 > ```
+>
+> **Quick AI Agent Update**  
+> Already have Socratic Hub installed? Paste this prompt into your existing workspace agent:
+> ```text
+> Pull latest changes from origin main, install any new dependencies from requirements.txt, verify state/ directory integrity, and restart server:app on port 8000.
+> ```
 
-# Socratic Hub
+---
 
-**Socratic Hub is an AI tutor that doesn't just lecture or dump text on you.** It teaches one small step at a time, checks that you understood with a quiz, and saves your notes to an Obsidian-compatible vault.
+**Socratic Hub** is an autonomous, stateful, and topic-agnostic learning engine implementing the **Alvar Method**—the pedagogical framework originated by educational theorist **Eero Alvar** (formalized through the Amos Blomqvist 1-on-1 tutoring architecture). Rather than presenting passive text dumps or unstructured chat replies, Socratic Hub transforms any subject into an interactive pedagogical journey governed by **active recall**, **adaptive curriculum graphs**, and **automated Socratic dialogue**.
 
-## Why use it instead of ChatGPT?
+Learners cannot simply skim or skip ahead: mastery must be demonstrated through rigorous, multi-tier Socratic checkpoints before downstream concepts unlock. Every mastered concept is synthesized into an Obsidian-compatible local knowledge vault in real time.
 
-- **You can't skip ahead.** The next lesson only unlocks after you pass the quiz for the current one.
-- **You see the whole path.** Every topic gets a visual Mermaid roadmap showing what to learn and in what order.
-- **Your notes write themselves.** Each lesson you master is saved as a Markdown note in `notes/`, ready to open in Obsidian.
-- **It runs on your machine.** The dashboard and all your notes and progress are stored locally in plain files. Nothing is sent to a hosted service by this project.
+---
 
-## How it works
+## Engine in Action
 
-1. **Diagnose:** a few quick questions find out what you already know, so you don't relearn it.
-2. **Roadmap:** the tutor builds a step-by-step plan for your topic and shows it as a diagram.
-3. **Lesson:** you get one short lesson at a time on the dashboard at `http://localhost:8000`.
-4. **Quiz & Save:** you take a short quiz. Pass it and the lesson is saved to your vault, and the next one opens.
+> 📸 **Screenshot Directory:** Place your interface captures in the [`assets/`](assets/) directory using the filenames referenced below.
+
+### 1. Interactive Roadmap & Knowledge Graph
+Visualize topological dependencies, completed milestones, and pending concept tracks in real time via Mermaid DAGs and the interactive 2D Knowledge Cosmos.
+<p align="center">
+  <img src="assets/roadmap-preview.png" alt="Curriculum Traversal & Roadmap" width="850">
+</p>
+*Figure 1: Adaptive curriculum graph showing prerequisite roots, active learning frontier, and mastered knowledge branches.*
+
+### 2. Socratic Probing & Active Recall Dialogue
+Engage in focused, step-by-step Socratic dialogue where every lesson demands active synthesis rather than passive absorption.
+<p align="center">
+  <img src="assets/socratic-session.png" alt="Active Recall Dialogue Session" width="850">
+</p>
+*Figure 2: Active recall dialogue session delivering bite-sized lesson scaffolding followed by targeted comprehension checks.*
+
+### 3. Live Verification & Mastery State
+Multi-tier diagnostic gates and lookahead academic audits verify concept retention and textbook rigor before advancing.
+<p align="center">
+  <img src="assets/verification-flow.png" alt="Automated State & Node Verification" width="850">
+</p>
+*Figure 3: Real-time mastery evaluation, automated state transitions, and background verifier audits.*
+
+---
+
+## What's New
+
+### Knowledge Cosmos 2.0 (Obsidian Graph Overhaul)
+* **Dynamic Radial Geometry:** Multi-discipline topics project along balanced angular rays with automatic inner-void scaling ($R_0 \propto \sqrt{N}$), eliminating spoke crowding across 50+ topics.
+* **Golden-Ratio Spectral Palette:** Each discipline dynamically inherits high-contrast, non-colliding chromatic families ($\phi = 137.5^\circ$), with mastered nodes casting real-time Canvas glow bloom in their topic's native hue.
+* **LOD & Pan/Zoom Stability:** Monospace cluster headers (`// TOPIC`) scale smoothly with screen size and dynamically declutter at global zoom levels.
+
+### Resilient Vault & Note Architecture
+* **Archival Deep-Search:** Concept note resolution traverses archived topics (`notes/<Topic>/notes.md`), the active workspace (`lesson_notes.md`), and standalone concept files with fuzzy title containment. Merged canonical IDs never trigger 404s.
+* **Click-to-Copy Standby HUD:** Replaced blank idle states with a minimalist, frameless Obsidian cheat sheet featuring interactive clipboard copying for all core CLI flags (`.teach`, `.review`, `--ref`, `--domain`).
+
+---
+
+## Core Tenets & Alvar Method Operationalization
+
+The **Alvar Method**, pioneered by **Eero Alvar**, rejects the illusion of competence generated by passive consumption. Socratic Hub operationalizes this philosophy into three computational pillars:
+
+### 1. First-Principles Scaffolding
+* **Topological Prerequisite Decomposition:** Complex domains are decomposed into fine-grained atomic nodes (12–25+ nodes per topic) organized as a Directed Acyclic Graph (DAG).
+* **Zero Orphan Concepts:** Every lesson explicitly connects back to foundational primitives or previously verified baseline nodes. No floating facts; every concept is scaffolded from first principles.
+* **Domain Depth:** The engine synthesizes parallel prerequisite tracks, ensuring learners understand foundational mechanics prior to advanced operational trade-offs.
+
+### 2. Active Probing over Passive Reading
+* **Diagnostic Boundary Probing:** When introducing a topic, Socratic Hub conducts targeted multi-track diagnostic probing (Tier 1 Primitives, Tier 2 Core Mechanics, Tier 3 Advanced Integration) to discover your exact knowledge boundary without wasteful repetition.
+* **Anti-Guessing Guardrails:** Success at intermediate mechanics triggers advanced edge checks to rule out lucky guesses, while failures automatically identify prerequisite floors.
+* **Strict Mastery Gating:** Learners advance only upon passing randomized, adversarial 3-tier assessments (grounding definitions, operational trade-offs, and misconception traps).
+
+### 3. Self-Healing & Decoupled State
+* **Stateful Single Source of Truth:** Engine progress is decoupled from transient LLM context windows and maintained on disk in `state/` (`topic.json`, `curriculum.json`, `quiz.json`, `knowledge_graph.json`).
+* **Zero-Leak Knowledge Vault:** Completed nodes write atomically to Obsidian-compliant Markdown (`notes/<topic>/<node_id>.md` and `notes/lesson_notes.md`) complete with YAML frontmatter and cross-track wikilinks.
+* **Deterministic Resumability:** Sessions can pause, recover, or survive IDE crashes with zero loss of curriculum state or progress history.
+
+---
+
+## Why Socratic Hub?
+
+| Feature | Standard LLM Chat (ChatGPT, Claude) | Socratic Hub (Alvar Method) |
+|---|---|---|
+| **Learning Mode** | Passive reading / wall of text | Active recall, step-by-step Socratic dialogue |
+| **Pacing** | Unconstrained, easy to skim | Strict progression gating—mastery unlocks next node |
+| **Curriculum Structure** | Flat, linear, or ad-hoc explanations | Topological DAG with dependency tracking |
+| **Prior Knowledge** | Assumed or re-explained from scratch | Automated multi-track diagnostic baseline probing |
+| **Note Taking** | Copy-paste manually from chat | Automatic generation of Obsidian-ready markdown vault |
+| **Privacy & Storage** | Ephemeral, hosted on third-party cloud | 100% local files, local state, and local web dashboard |
+
+---
+
+## Universal Topic Agnosticism
+
+Socratic Hub contains no hardcoded subject domains. The Alvar Method's structural decomposition applies across any field:
+
+* **Systems Engineering & Computer Science:**
+  ```text
+  .teach Distributed Consensus and Raft Protocol
+  .teach Linux eBPF Kernel Tracing
+  ```
+* **Linguistics & Natural Languages:**
+  ```text
+  .teach Mandarin Phonology and Tonal Contours
+  .teach PIE Morphological Reconstruction
+  ```
+* **Quantitative Finance & Economics:**
+  ```text
+  .teach Black-Scholes Model and Option Greeks
+  .teach Central Bank Liquidity Mechanics
+  ```
+* **Biomedical & Natural Sciences:**
+  ```text
+  .teach CRISPR-Cas9 Gene Editing Mechanisms
+  .teach Organic Chemistry Stereochemistry
+  ```
+
+---
 
 ## Quickstart
 
-1. **Clone** the repo and open it in your IDE:
-   ```bash
-   git clone https://github.com/DownMD/socratic-hub.git
-   cd socratic-hub
-   ```
-2. **Install** the dependencies (Python 3.10+):
-   ```bash
-   python -m pip install -r requirements.txt
-   ```
-3. **Start** the server, then open <http://localhost:8000>:
-   ```bash
-   python -m uvicorn server:app --host 127.0.0.1 --port 8000 --no-access-log
-   ```
-   Port 8000 is fixed. If something else is using it, ask your agent to follow [`INIT.md`](INIT.md).
-4. **Learn:** in your IDE's AI chat, type:
-   ```text
-   .teach <topic>
-   ```
+### Prerequisites
+* **Python 3.10+**
+* Git
 
-Not sure where to start? Paste the one-line prompt at the top of this page into your AI chat and it will set everything up for you.
+### 1. Clone & Set Up Workspace
+```bash
+git clone https://github.com/DownMD/socratic-hub.git
+cd socratic-hub
+```
 
-### Commands
+*(Recommended)* Create and activate a Python virtual environment:
+```bash
+# macOS/Linux
+python3 -m venv .venv
+source .venv/bin/activate
 
-| Command | What it does |
+# Windows (PowerShell)
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+```
+
+### 2. Install Dependencies
+```bash
+python -m pip install -r requirements.txt
+```
+
+### 3. Launch Local Server
+Start the local dashboard and API engine at <http://localhost:8000>:
+```bash
+python -m uvicorn server:app --host 127.0.0.1 --port 8000 --no-access-log
+```
+> ℹ️ Port 8000 is fixed for dashboard synchronization. If port 8000 is occupied, consult [`INIT.md`](INIT.md) for diagnostic and port repair steps.
+
+### 4. Start Learning
+In your IDE's agent chat window (Antigravity, Cursor, Claude Code, or Windsurf), enter:
+```text
+.teach <topic>
+```
+
+---
+
+## Control Commands
+
+| Command | Action |
 |---|---|
-| `.teach <topic>` | Start learning a new topic |
-| `.resume <topic>` | Pick up where you left off |
-| `.stop` | Save and pause the current session |
-| `.start` / `.open` | Start the dashboard |
-| `.kill` | Save and shut the server down |
+| `.teach <topic>` | Decomposes topic, runs diagnostic probing, builds DAG, and begins learning |
+| `.resume <topic>` | Resumes an active or paused session at the current unmastered node |
+| `.stop` | Archives the current session, saves progress, and pauses learning |
+| `.start` / `.open` | Launches the local dashboard without altering active session state |
+| `.kill` | Archives the session and shuts down the local background server |
 
-## Supported IDEs
+---
 
-Open the repo in your IDE and it picks up its own instructions file.
+## Supported IDEs & Agent Configurations
 
-| IDE | Instructions file |
-|---|---|
-| Antigravity | `AGENTS.md` |
-| Cursor | `.cursorrules` |
-| Claude Code | `CLAUDE.md` |
-| Windsurf | `.windsurfrules` |
-| GitHub Copilot | `.github/copilot-instructions.md` |
+Socratic Hub integrates seamlessly with major AI development environments via IDE-specific rule configurations pointing to the core state machine:
 
-`AGENTS.md` is the main rulebook; the others point back to it. Setup or repair help is in [`INIT.md`](INIT.md).
+| Environment | Agent Instruction File | Integration Details |
+|---|---|---|
+| **Google Antigravity** | [`AGENTS.md`](AGENTS.md) | Primary state machine specification and subagent verifier rules |
+| **Cursor** | [`.cursorrules`](.cursorrules) | Root agent rules forwarding to `AGENTS.md` |
+| **Claude Code** | [`CLAUDE.md`](CLAUDE.md) | CLI agent instructions and command triggers |
+| **Windsurf** | [`.windsurfrules`](.windsurfrules) | Cascade rules forwarding to `AGENTS.md` |
+| **GitHub Copilot** | [`.github/copilot-instructions.md`](.github/copilot-instructions.md) | Copilot chat persona and file boundary constraints |
 
-## Pedagogy & Attribution
+Detailed setup and troubleshooting instructions are provided in [`INIT.md`](INIT.md).
 
-The teaching ideas here (checking prior knowledge first, tiered mastery checks, one concept at a time, practical lesson style) come from the **Amos Blomqvist framework by Eero Alvar**. This project does not own or redefine that framework. It is the software that puts it to work: the multi-agent orchestration, the backend, and the visualizations (dashboard, knowledge graph, roadmaps).
+---
 
-More technical detail lives in [`.doc/`](.doc/).
+## Architecture & Specifications
+
+For developers, contributors, and agents looking to inspect or extend the underlying engine, comprehensive technical documentation is located in the [`.doc/`](.doc/) directory:
+
+* [`.doc/pedagogy_and_agents.md`](.doc/pedagogy_and_agents.md) — Comprehensive treatise on the Alvar Method, Amos Blomqvist framework, diagnostic budgets, and pedagogical blueprints (Quantitative, Language, Practical, Strategy, First-Principles).
+* [`.doc/roadmap_and_curriculum.md`](.doc/roadmap_and_curriculum.md) — DAG generation algorithm, topological sorting, prior knowledge scanning, and deduplication logic.
+* [`.doc/api_and_state.md`](.doc/api_and_state.md) — REST API endpoints, WebSocket sync, and JSON state schemas (`state/*.json`).
+* [`.doc/architecture.md`](.doc/architecture.md) — IPC bridge mechanisms, file system state boundaries, and subagent verification pipelines.
+* [`.doc/frontend_guide.md`](.doc/frontend_guide.md) — Real-time reactive dashboard, Knowledge Cosmos 2D graph renderer, and theme specifications.
+* [`.doc/maintenance.md`](.doc/maintenance.md) — Vault synchronization, reference ingestion, and documentation generator scripts.
+
+---
+
+## Pedagogical Attribution
+
+The pedagogical tenets embodied in this project—including prerequisite track partitioning, multi-tiered diagnostic probing, active recall gates, and first-principles mastery scaffolding—are based on the **Alvar Method** developed by **Eero Alvar**, implemented via the **Amos Blomqvist** 1-on-1 tutoring architecture.
+
+Socratic Hub provides the autonomous software implementation: multi-agent coordination, file-based state orchestration, interactive web visualization, and automated knowledge graph synthesis.
+
+---
 
 ## License
 
-[MIT](LICENSE). Copyright (c) 2026 Down MD.
+This project is licensed under the [MIT License](LICENSE). Copyright &copy; 2026 Down MD.

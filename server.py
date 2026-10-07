@@ -1,5 +1,7 @@
+import copy
 import json
 import os
+import random
 import re
 import shutil
 import signal
@@ -30,10 +32,18 @@ KNOWLEDGE_GRAPH_FILE = STATE_DIR / "knowledge_graph.json"
 PAUSE_FLAG = STATE_DIR / "pause.flag"
 CURRICULUM_FILE = STATE_DIR / "curriculum.json"
 
+try:
+    from scripts.clean_knowledge_graph import transitive_reduction, MERGE_MAP
+except ImportError:
+    import sys
+    sys.path.append(str(BASE_DIR))
+    from scripts.clean_knowledge_graph import transitive_reduction, MERGE_MAP
+
 DEFAULT_STATE: Dict[str, Any] = {
     "session_active": False,
-    "topic": "Not Set",
-    "phase": "IDLE",
+    "topic": None,
+    "status": "standby",
+    "phase": "idle",
     "active_node": None,
     "active_node_id": None,
     "current_node": "",
@@ -41,15 +51,16 @@ DEFAULT_STATE: Dict[str, Any] = {
     "lesson_markdown": "",
     "quiz": None,
     "active_quiz": None,
-    "dag_mermaid": "",
+    "dag_mermaid": "graph TD\n",
     "latest_answer": None,
     "quiz_history": [],
     "reference_scope": None
 }
 
 DEFAULT_TOPIC_SKELETON: Dict[str, Any] = {
-    "topic": "",
+    "topic": None,
     "phase": "idle",
+    "status": "standby",
     "active_node_id": None,
     "active_node": None,
     "reference_scope": {"collection": "general", "tags": []}
@@ -65,12 +76,7 @@ DEFAULT_KNOWLEDGE_GRAPH_SKELETON: Dict[str, Any] = {
     "links": []
 }
 
-DEFAULT_ROADMAP_SKELETON: str = """graph TD
-  classDef completed stroke:#22c55e,stroke-width:2px;
-  classDef active stroke:#38bdf8,stroke-width:3px;
-  classDef pending stroke:#475569,stroke-width:1px;
-  classDef mastered stroke:#22c55e,stroke-width:2px;
-"""
+DEFAULT_ROADMAP_SKELETON: str = "graph TD\n"
 
 DEFAULT_LESSON_NOTES_PLACEHOLDER: str = "<!-- Active lesson notes will appear here -->\n"
 
@@ -308,7 +314,7 @@ def bootstrap_knowledge_graph() -> Dict[str, Any]:
                 if roadmap_file.exists():
                     try:
                         r_text = roadmap_file.read_text(encoding="utf-8")
-                        node_defs = re.findall(r'(\w+)\s*\["?([^"\]]+)"?\]', r_text)
+                        node_defs = re.findall(r'([a-zA-Z0-9_\-]+)\s*\["?([^"\]]+)"?\]', r_text)
                         for n_key, raw_lbl in node_defs:
                             lbl = clean_label(raw_lbl)
                             cid = to_canonical_id(lbl)
@@ -336,7 +342,7 @@ def bootstrap_knowledge_graph() -> Dict[str, Any]:
                                     "topics": [topic_name]
                                 }
 
-                        edge_defs = re.findall(r'(\w+)(?:\[[^\]]*\])?\s*-->\s*(\w+)', r_text)
+                        edge_defs = re.findall(r'([a-zA-Z0-9_\-]+)(?:\[[^\]]*\])?\s*-->\s*([a-zA-Z0-9_\-]+)', r_text)
                         for src_k, tgt_k in edge_defs:
                             src_cid = key_to_cid.get(src_k) or to_canonical_id(src_k)
                             tgt_cid = key_to_cid.get(tgt_k) or to_canonical_id(tgt_k)
@@ -370,12 +376,108 @@ def bootstrap_knowledge_graph() -> Dict[str, Any]:
         "nodes": list(nodes_map.values()),
         "edges": edges_list
     }
+    kg = validate_and_repair_graph_edges(kg)
     save_knowledge_graph(kg)
     return kg
+
+
+def validate_and_repair_graph_edges(kg: Dict[str, Any]) -> Dict[str, Any]:
+    nodes = kg.get("nodes", [])
+    edges = kg.get("edges", [])
+
+    node_id_map: Dict[str, str] = {}
+    for n in nodes:
+        nid = n.get("id")
+        if not nid:
+            continue
+        node_id_map[nid] = nid
+        node_id_map[nid.lower()] = nid
+        lbl = n.get("label")
+        if lbl:
+            c_lbl = clean_label(lbl)
+            node_id_map[c_lbl] = nid
+            node_id_map[c_lbl.lower()] = nid
+            cid = to_canonical_id(lbl)
+            if cid:
+                node_id_map[cid] = nid
+                node_id_map[cid.lower()] = nid
+
+    valid_node_ids = set(node_id_map.values())
+    valid_edges = []
+    seen = set()
+
+    for e in edges:
+        raw_s = str(e.get("source", "")).strip()
+        raw_t = str(e.get("target", "")).strip()
+        s = node_id_map.get(raw_s) or node_id_map.get(raw_s.lower())
+        t = node_id_map.get(raw_t) or node_id_map.get(raw_t.lower())
+        if s and t and s != t and s in valid_node_ids and t in valid_node_ids:
+            if (s, t) not in seen:
+                seen.add((s, t))
+                valid_edges.append({
+                    "source": s,
+                    "target": t,
+                    "relation": e.get("relation", "prerequisite")
+                })
+
+    # Auto-reconstruction if edges are missing or malformed for curriculum topics
+    jlpt_nodes = [n for n in nodes if any("jlpt" in str(t).lower() for t in n.get("topics", []))]
+    process_nodes = [n for n in nodes if any("process" in str(t).lower() for t in n.get("topics", []))]
+
+    jlpt_edge_count = sum(1 for e in valid_edges if e["source"] in {n["id"] for n in jlpt_nodes})
+    process_edge_count = sum(1 for e in valid_edges if e["source"] in {n["id"] for n in process_nodes})
+
+    if len(jlpt_nodes) >= 2 and jlpt_edge_count < 5:
+        roadmap_file = NOTES_DIR / "JLPT N5 Grammar & Syntax" / "roadmap.mmd"
+        if roadmap_file.exists():
+            try:
+                r_text = roadmap_file.read_text(encoding="utf-8")
+                raw_k_map = {}
+                for nk, nlbl in re.findall(r'([a-zA-Z0-9_\-]+)\s*\["?([^"\]]+)"?\]', r_text):
+                    cid = node_id_map.get(clean_label(nlbl)) or node_id_map.get(to_canonical_id(nlbl))
+                    if cid:
+                        raw_k_map[nk] = cid
+                for sk, tk in re.findall(r'([a-zA-Z0-9_\-]+)(?:\[[^\]]*\])?\s*-->\s*([a-zA-Z0-9_\-]+)', r_text):
+                    s_id = raw_k_map.get(sk) or node_id_map.get(sk)
+                    t_id = raw_k_map.get(tk) or node_id_map.get(tk)
+                    if s_id and t_id and s_id != t_id and (s_id, t_id) not in seen:
+                        seen.add((s_id, t_id))
+                        valid_edges.append({"source": s_id, "target": t_id, "relation": "prerequisite"})
+            except Exception:
+                pass
+
+    if len(process_nodes) >= 2 and process_edge_count < 5:
+        roadmap_file = NOTES_DIR / "Process Analysis" / "roadmap.mmd"
+        if roadmap_file.exists():
+            try:
+                r_text = roadmap_file.read_text(encoding="utf-8")
+                raw_k_map = {}
+                for nk, nlbl in re.findall(r'([a-zA-Z0-9_\-]+)\s*\["?([^"\]]+)"?\]', r_text):
+                    cid = node_id_map.get(clean_label(nlbl)) or node_id_map.get(to_canonical_id(nlbl))
+                    if cid:
+                        raw_k_map[nk] = cid
+                for sk, tk in re.findall(r'([a-zA-Z0-9_\-]+)(?:\[[^\]]*\])?\s*-->\s*([a-zA-Z0-9_\-]+)', r_text):
+                    s_id = raw_k_map.get(sk) or node_id_map.get(sk)
+                    t_id = raw_k_map.get(tk) or node_id_map.get(tk)
+                    if s_id and t_id and s_id != t_id and (s_id, t_id) not in seen:
+                        seen.add((s_id, t_id))
+                        valid_edges.append({"source": s_id, "target": t_id, "relation": "prerequisite"})
+            except Exception:
+                pass
+
+    kg["edges"] = valid_edges
+    kg["links"] = valid_edges
+    return kg
+_QUIZ_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
 def sanitize_and_normalize_quiz(raw_text: str) -> Dict[str, Any]:
     raw_text = raw_text.strip()
     if not raw_text:
         return {"questions": []}
+
+    if raw_text in _QUIZ_CACHE:
+        return copy.deepcopy(_QUIZ_CACHE[raw_text])
 
     parsed = None
     try:
@@ -443,12 +545,31 @@ def sanitize_and_normalize_quiz(raw_text: str) -> Dict[str, Any]:
             else:
                 item["options"] = []
 
+            # Atomically shuffle options upon normalizing each question:
+            if not parsed.get("_shuffled") and item.get("options"):
+                paired = list(enumerate(item.get("options", [])))
+                random.shuffle(paired)
+                # Update correct_idx to match the new position of the correct answer
+                orig_correct = item.get("correct_idx", item.get("correct_index", 0))
+                try:
+                    orig_correct = int(orig_correct)
+                except (ValueError, TypeError):
+                    orig_correct = 0
+                new_correct = next((i for i, (orig_i, _) in enumerate(paired) if orig_i == orig_correct), 0)
+                item["options"] = [opt for _, opt in paired]
+                item["correct_idx"] = new_correct
+                item["correct_index"] = new_correct
+
             if not item.get("id"):
                 item["id"] = f"q{idx + 1}"
 
             norm_questions.append(item)
 
     payload["questions"] = norm_questions
+    payload["_shuffled"] = True
+    if len(_QUIZ_CACHE) > 50:
+        _QUIZ_CACHE.clear()
+    _QUIZ_CACHE[raw_text] = copy.deepcopy(payload)
     return payload
 
 
@@ -472,11 +593,20 @@ def load_state() -> Dict[str, Any]:
         try:
             with open(TOPIC_FILE, "r", encoding="utf-8") as f:
                 t_data = json.load(f)
-                if "topic" in t_data and data.get("topic") != t_data["topic"]:
-                    data["topic"] = t_data["topic"] or "Not Set"
-                    state_dirty = True
+                if "topic" in t_data:
+                    top_val = t_data.get("topic")
+                    if not top_val or top_val == "Not Set":
+                        if data.get("topic") is not None:
+                            data["topic"] = None
+                            state_dirty = True
+                    elif data.get("topic") != top_val:
+                        data["topic"] = top_val
+                        state_dirty = True
                 if "phase" in t_data and data.get("phase") != t_data["phase"]:
-                    data["phase"] = t_data["phase"] or "IDLE"
+                    data["phase"] = t_data.get("phase") or "idle"
+                    state_dirty = True
+                if "status" in t_data and data.get("status") != t_data["status"]:
+                    data["status"] = t_data.get("status")
                     state_dirty = True
                 if "reference_scope" in t_data and data.get("reference_scope") != t_data["reference_scope"]:
                     data["reference_scope"] = t_data["reference_scope"]
@@ -546,12 +676,24 @@ def load_state() -> Dict[str, Any]:
 
     is_active = bool(
         data.get("topic") and
-        data.get("topic") not in ("", "Not Set") and
-        str(data.get("phase", "")).lower() not in ("idle", "")
+        data.get("topic") not in ("", "Not Set", None) and
+        str(data.get("phase", "")).lower() not in ("idle", "standby", "")
     )
     if data.get("session_active") != is_active:
         data["session_active"] = is_active
         state_dirty = True
+
+    if not is_active:
+        if data.get("topic") in ("Not Set", ""):
+            data["topic"] = None
+            state_dirty = True
+        if data.get("status") != "standby":
+            data["status"] = "standby"
+            state_dirty = True
+    else:
+        if data.get("status") != "active":
+            data["status"] = "active"
+            state_dirty = True
 
     active_lbl = data.get("active_node") or data.get("current_node") or None
     data["active_node"] = active_lbl
@@ -570,14 +712,17 @@ def load_state() -> Dict[str, Any]:
 def save_state(state: Dict[str, Any]) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     temp_file = STATE_FILE.with_suffix(".tmp")
-    is_idle = (state.get("session_active") is False) or (state.get("topic") in ("Not Set", "") and str(state.get("phase", "")).upper() == "IDLE")
+    is_idle = (state.get("session_active") is False) or (state.get("topic") in ("Not Set", "", None) and str(state.get("phase", "")).lower() in ("idle", "standby", ""))
     if is_idle:
         payload = {
             "session_active": False,
-            "topic": "Not Set",
-            "phase": "IDLE",
+            "topic": None,
+            "status": "standby",
+            "phase": "idle",
             "active_node": None,
             "notes": "",
+            "lesson_markdown": "",
+            "dag_mermaid": "graph TD\n",
             "quiz": None
         }
     else:
@@ -665,6 +810,7 @@ def get_global_graph() -> Dict[str, Any]:
     kg = load_knowledge_graph()
     if not kg.get("nodes"):
         kg = bootstrap_knowledge_graph()
+    kg = validate_and_repair_graph_edges(kg)
     return kg
 
 
@@ -905,6 +1051,8 @@ def sync_knowledge_graph(req: GraphSyncRequest) -> Dict[str, Any]:
         "nodes": list(nodes_by_cid.values()),
         "edges": unique_edges
     }
+    updated_kg = validate_and_repair_graph_edges(updated_kg)
+    updated_kg["edges"] = transitive_reduction(updated_kg["edges"])
     save_knowledge_graph(updated_kg)
     return {"status": "ok", "graph": updated_kg}
 
@@ -1173,15 +1321,28 @@ def append_lesson(req: LessonRequest) -> Dict[str, Any]:
 @app.get("/api/notes/{node_id}")
 def get_node_note(node_id: str) -> Dict[str, Any]:
     clean_id = to_canonical_id(node_id)
+    clean_norm = clean_id.replace("-", "")
     kg = load_knowledge_graph()
     kg_nodes = kg.get("nodes", [])
     kg_edges = kg.get("edges", [])
 
     node_meta = None
     for n in kg_nodes:
-        if n.get("id") == clean_id or to_canonical_id(n.get("label", "")) == clean_id or n.get("id") == node_id:
+        nid = n.get("id", "")
+        nlabel = n.get("label", "")
+        if (nid == clean_id or 
+            nid == node_id or 
+            to_canonical_id(nlabel) == clean_id or 
+            to_canonical_id(nlabel) == to_canonical_id(node_id) or
+            clean_norm == nid.replace("-", "") or
+            MERGE_MAP.get(clean_id) == nid or
+            MERGE_MAP.get(nid) == clean_id or
+            MERGE_MAP.get(to_canonical_id(node_id)) == nid):
             node_meta = n
             break
+
+    label = node_meta.get("label", "") if node_meta else ""
+    clean_label_str = clean_label(label).lower() if label else ""
 
     candidates = {
         node_id.lower(),
@@ -1189,18 +1350,29 @@ def get_node_note(node_id: str) -> Dict[str, Any]:
         f"{node_id}.md".lower(),
         f"{clean_id}.md".lower(),
     }
-    if node_meta:
-        if node_meta.get("label"):
-            label_slug = to_canonical_id(node_meta["label"]).lower()
-            candidates.add(label_slug)
-            candidates.add(f"{label_slug}.md")
-        if node_meta.get("id"):
-            m_id = str(node_meta["id"]).lower()
-            candidates.add(m_id)
-            candidates.add(f"{m_id}.md")
-            m_cid = to_canonical_id(m_id).lower()
-            candidates.add(m_cid)
-            candidates.add(f"{m_cid}.md")
+    target_labels = set()
+    if label:
+        label_cid = to_canonical_id(label).lower()
+        candidates.add(clean_label_str)
+        candidates.add(label_cid)
+        candidates.add(f"{label_cid}.md")
+        target_labels.add(clean_label_str)
+        target_labels.add(label.lower())
+    if node_meta and node_meta.get("id"):
+        m_id = str(node_meta["id"]).lower()
+        candidates.add(m_id)
+        candidates.add(f"{m_id}.md")
+        m_cid = to_canonical_id(m_id).lower()
+        candidates.add(m_cid)
+        candidates.add(f"{m_cid}.md")
+        target_labels.add(m_id)
+
+    for k, v in MERGE_MAP.items():
+        if clean_id in (k, v) or node_id.lower() in (k, v) or (node_meta and node_meta.get("id") in (k, v)):
+            candidates.add(k.lower())
+            candidates.add(f"{k.lower()}.md")
+            candidates.add(v.lower())
+            candidates.add(f"{v.lower()}.md")
 
     state = load_state()
     active_topic = state.get("topic")
@@ -1212,39 +1384,52 @@ def get_node_note(node_id: str) -> Dict[str, Any]:
         except Exception:
             pass
 
-    # 1. Check if notes/<topic>/{node_id}.md exists.
+    meta_topics = node_meta.get("topics", []) if node_meta else []
+    candidate_topics = []
+    for t in meta_topics:
+        if t and t not in candidate_topics:
+            candidate_topics.append(t)
+    if active_topic and active_topic not in candidate_topics and active_topic != "Not Set":
+        candidate_topics.append(active_topic)
+
+    # A. Standalone files: check notes/<topic>/<concept_id>.md or notes/<concept_id>.md
     matched_file = None
     topic_dirs = []
-    t_dir = get_topic_notes_dir(active_topic) if active_topic else None
-    if t_dir and t_dir.exists() and t_dir.is_dir():
-        topic_dirs.append(t_dir)
+    for t in candidate_topics:
+        d = get_topic_notes_dir(t)
+        if d.exists() and d.is_dir() and d not in topic_dirs:
+            topic_dirs.append(d)
 
     for t_dir in topic_dirs:
-        if t_dir.exists() and t_dir.is_dir():
-            direct_candidates = [
-                t_dir / f"{node_id}.md",
-                t_dir / f"{clean_id}.md",
-                t_dir / node_id,
-                t_dir / clean_id
-            ]
-            for dc in direct_candidates:
-                if dc.exists() and dc.is_file():
-                    matched_file = dc
-                    break
-            if matched_file:
+        for c in candidates:
+            c_name = c if c.endswith(".md") else f"{c}.md"
+            cand_p = t_dir / c_name
+            if cand_p.exists() and cand_p.is_file() and cand_p.name.lower() not in ("notes.md", "lesson_notes.md"):
+                matched_file = cand_p
+                break
+        if matched_file:
+            break
+
+    if not matched_file:
+        for c in candidates:
+            c_name = c if c.endswith(".md") else f"{c}.md"
+            cand_p = NOTES_DIR / c_name
+            if cand_p.exists() and cand_p.is_file() and cand_p.name.lower() != "lesson_notes.md":
+                matched_file = cand_p
                 break
 
+    if not matched_file:
+        for t_dir in topic_dirs:
             for f in t_dir.glob("*.md"):
-                f_lower = f.name.lower()
-                stem_lower = f.stem.lower()
-                if f_lower in candidates or stem_lower in candidates:
-                    matched_file = f
-                    break
+                if f.name.lower() in ("notes.md", "lesson_notes.md"):
+                    continue
                 try:
                     txt = f.read_text(encoding="utf-8")
                     fm = parse_frontmatter(txt)
                     fm_id = str(fm.get("id", "")).lower()
-                    if fm_id and (fm_id in candidates or to_canonical_id(fm_id).lower() in candidates):
+                    fm_title = str(fm.get("title", "")).lower()
+                    if (fm_id and (fm_id in candidates or to_canonical_id(fm_id).lower() in candidates)) or \
+                       (fm_title and (fm_title in candidates or to_canonical_id(fm_title).lower() in candidates)):
                         matched_file = f
                         break
                 except Exception:
@@ -1252,19 +1437,16 @@ def get_node_note(node_id: str) -> Dict[str, Any]:
             if matched_file:
                 break
 
-    # If not found in active topic directory, search other topic directories in NOTES_DIR
     if not matched_file and NOTES_DIR.exists():
         for root, _, files in os.walk(NOTES_DIR):
             for f in files:
-                if not f.endswith(".md") or f.lower() == "lesson_notes.md":
+                if not f.endswith(".md") or f.lower() in ("notes.md", "lesson_notes.md"):
                     continue
-                f_lower = f.lower()
-                stem_lower = Path(f).stem.lower()
-                if f_lower in candidates or stem_lower in candidates:
-                    matched_file = Path(root) / f
+                p = Path(root) / f
+                if f.lower() in candidates or p.stem.lower() in candidates:
+                    matched_file = p
                     break
                 try:
-                    p = Path(root) / f
                     txt = p.read_text(encoding="utf-8")
                     fm = parse_frontmatter(txt)
                     fm_id = str(fm.get("id", "")).lower()
@@ -1288,6 +1470,7 @@ def get_node_note(node_id: str) -> Dict[str, Any]:
             origin = "diagnostic" if (node_meta and node_meta.get("origin") == "diagnostic") else "curriculum"
             badge_label = "Baseline Knowledge" if origin == "diagnostic" else "Curriculum Mastered"
         status = fm.get("status") or (node_meta.get("status") if node_meta else "mastered")
+        parent_dir_topic = matched_file.parent.name if matched_file.parent != NOTES_DIR else ""
         return {
             "found": True,
             "content": content,
@@ -1296,37 +1479,104 @@ def get_node_note(node_id: str) -> Dict[str, Any]:
             "badge_label": badge_label,
             "status": status,
             "title": fm.get("title") or (node_meta.get("label") if node_meta else node_id),
-            "topic": fm.get("topic") or (node_meta.get("topics", [""])[0] if node_meta and node_meta.get("topics") else (active_topic or ""))
+            "topic": fm.get("topic") or (node_meta.get("topics", [""])[0] if node_meta and node_meta.get("topics") else (parent_dir_topic or (candidate_topics[0] if candidate_topics else "")))
         }
 
-    # 2. Fallback: inspect notes/lesson_notes.md directly and extract matching section
-    if NOTES_FILE.exists():
-        try:
-            txt = NOTES_FILE.read_text(encoding="utf-8")
-            target_labels = set()
-            if node_meta and node_meta.get("label"):
-                target_labels.add(clean_label(node_meta["label"]).lower())
-                target_labels.add(str(node_meta["label"]).lower())
-            if node_meta and node_meta.get("id"):
-                target_labels.add(str(node_meta["id"]).lower())
+    # Helper for matching section headers
+    def matches_section_header(raw_header: str) -> bool:
+        h_clean = clean_label(raw_header).lower()
+        h_cid = to_canonical_id(raw_header)
+        h_clean_cid = to_canonical_id(h_clean)
 
-            curr_node_title = None
-            if CURRICULUM_FILE.exists():
+        # 1. Exact clean label matching
+        if clean_label_str and h_clean == clean_label_str:
+            return True
+        if h_clean in target_labels:
+            return True
+        if h_clean == clean_id.lower() or h_clean == node_id.lower():
+            return True
+
+        # 2. Canonical ID matching
+        if h_cid == clean_id or h_clean_cid == clean_id:
+            return True
+        if h_cid in candidates or h_clean_cid in candidates:
+            return True
+
+        # 3. Bidirectional substring/containment
+        if clean_id in h_cid or h_cid in clean_id:
+            return True
+        if clean_id in h_clean_cid or h_clean_cid in clean_id:
+            return True
+        if clean_norm in h_cid.replace("-", "") or h_cid.replace("-", "") in clean_norm:
+            return True
+
+        # 4. Merge map checks
+        if MERGE_MAP.get(h_cid) == clean_id or MERGE_MAP.get(h_clean_cid) == clean_id:
+            return True
+        if MERGE_MAP.get(clean_id) == h_cid or MERGE_MAP.get(clean_id) == h_clean_cid:
+            return True
+
+        # 5. Baseline header matching
+        if "baseline" in raw_header.lower():
+            base_concept = clean_label(raw_header).lower()
+            if (base_concept == node_id.lower() or
+                to_canonical_id(base_concept) == clean_id or
+                to_canonical_id(base_concept) in candidates or
+                to_canonical_id(base_concept).replace("-", "") == clean_norm):
+                return True
+
+        return False
+
+    # B. Topic Archives (notes/<topic_folder>/notes.md)
+    if NOTES_DIR.exists():
+        checked_archive_paths = set()
+        topic_folders = []
+        for t in candidate_topics:
+            t_dir = get_topic_notes_dir(t)
+            if t_dir.exists() and t_dir.is_dir():
+                topic_folders.append(t_dir)
+        for child in NOTES_DIR.iterdir():
+            if child.is_dir() and child not in topic_folders:
+                topic_folders.append(child)
+
+        for tf in topic_folders:
+            archive_file = tf / "notes.md"
+            if archive_file.exists() and archive_file.is_file() and archive_file not in checked_archive_paths:
+                checked_archive_paths.add(archive_file)
                 try:
-                    curr_data = json.loads(CURRICULUM_FILE.read_text(encoding="utf-8"))
-                    for cn in curr_data.get("nodes", []):
-                        cn_id = str(cn.get("id", "")).lower()
-                        if cn_id == node_id.lower() or cn_id == clean_id.lower() or to_canonical_id(cn_id) == clean_id.lower():
-                            if cn.get("title"):
-                                curr_node_title = cn.get("title")
-                                target_labels.add(clean_label(cn["title"]).lower())
-                                target_labels.add(cn["title"].lower())
+                    txt = archive_file.read_text(encoding="utf-8")
+                    sections = re.split(r'\n(?=##\s+)', txt)
+                    for sec in sections:
+                        sec_strip = sec.strip()
+                        if not sec_strip:
+                            continue
+                        lines = sec_strip.splitlines()
+                        if not lines or not lines[0].startswith("##"):
+                            continue
+                        raw_header = re.sub(r'^##\s+', '', lines[0]).strip()
+                        if matches_section_header(raw_header):
+                            is_baseline = "baseline" in raw_header.lower()
+                            origin = "diagnostic" if is_baseline else ((node_meta.get("origin") if node_meta else None) or "curriculum")
+                            status = "mastered" if is_baseline else ((node_meta.get("status") if node_meta else None) or "mastered")
+                            badge_label = "Baseline Knowledge" if is_baseline else ((node_meta.get("badge_label") if node_meta else None) or "Curriculum Mastered")
+                            topic_name = (node_meta.get("topics", [""])[0] if node_meta and node_meta.get("topics") else tf.name)
+                            return {
+                                "found": True,
+                                "content": sec_strip,
+                                "id": node_id,
+                                "origin": origin,
+                                "badge_label": badge_label,
+                                "status": status,
+                                "title": clean_label(raw_header),
+                                "topic": topic_name
+                            }
                 except Exception:
                     pass
 
-            node_num_match = re.search(r'node[-_]?(\d+)|\b(\d+)\b', node_id, re.IGNORECASE)
-            node_num = int(node_num_match.group(1) or node_num_match.group(2)) if node_num_match else None
-
+    # C. Active workspace notes (notes/lesson_notes.md)
+    if NOTES_FILE.exists():
+        try:
+            txt = NOTES_FILE.read_text(encoding="utf-8")
             sections = re.split(r'\n(?=##\s+)', txt)
             for sec in sections:
                 sec_strip = sec.strip()
@@ -1335,36 +1585,13 @@ def get_node_note(node_id: str) -> Dict[str, Any]:
                 lines = sec_strip.splitlines()
                 if not lines or not lines[0].startswith("##"):
                     continue
-
                 raw_header = re.sub(r'^##\s+', '', lines[0]).strip()
-                header_clean = clean_label(raw_header).lower()
-                header_cid = to_canonical_id(raw_header)
-                header_clean_cid = to_canonical_id(header_clean)
-
-                sec_num_match = re.search(r'node\s*(\d+)|\b(\d+)[\.\:]', raw_header, re.IGNORECASE)
-                sec_num = int(sec_num_match.group(1) or sec_num_match.group(2)) if sec_num_match else None
-
-                match_found = False
-                if header_clean in target_labels or header_clean == clean_id.lower() or header_clean == node_id.lower():
-                    match_found = True
-                elif header_cid in candidates or header_cid == clean_id or header_clean_cid in candidates or header_clean_cid == clean_id:
-                    match_found = True
-                elif node_num is not None and sec_num is not None and node_num == sec_num:
-                    match_found = True
-                elif curr_node_title and (clean_label(curr_node_title).lower() in header_clean or header_clean in clean_label(curr_node_title).lower()):
-                    match_found = True
-                elif "baseline" in raw_header.lower():
-                    base_concept = clean_label(raw_header).lower()
-                    if base_concept == node_id.lower() or to_canonical_id(base_concept) == clean_id:
-                        match_found = True
-
-                if match_found:
+                if matches_section_header(raw_header):
                     is_baseline = "baseline" in raw_header.lower()
                     origin = "diagnostic" if is_baseline else ((node_meta.get("origin") if node_meta else None) or "curriculum")
                     is_active = (
                         clean_id == to_canonical_id(state.get("active_node_id", "")) or
-                        clean_id == to_canonical_id(state.get("active_node", "")) or
-                        (node_num is not None and sec_num is not None and node_num == sec_num and state.get("phase", "").lower() == "teaching")
+                        clean_id == to_canonical_id(state.get("active_node", ""))
                     )
                     status = "mastered" if is_baseline else ((node_meta.get("status") if node_meta else None) or ("active" if is_active else "mastered"))
                     badge_label = "Baseline Knowledge" if is_baseline else ((node_meta.get("badge_label") if node_meta else None) or ("Active Lesson" if status == "active" else "Curriculum Mastered"))
@@ -1381,7 +1608,7 @@ def get_node_note(node_id: str) -> Dict[str, Any]:
         except Exception:
             pass
 
-    # 3. If file does not exist: inspect state/knowledge_graph.json to find node metadata
+    # D. Graph Fallback
     prereqs = []
     for edge in kg_edges:
         tgt = edge.get("target")
@@ -1728,7 +1955,7 @@ def load_topic(req: TopicRequest) -> Dict[str, Any]:
 
 @app.post("/api/archive")
 def archive_topic(req: Optional[ArchiveRequest] = None) -> Dict[str, Any]:
-    topic_name = req.topic.strip() if req and req.topic else ""
+    topic_name = str(req.topic or "").strip() if req and req.topic else ""
     reference_scope = None
     if not topic_name:
         # Read from state/topic.json
@@ -1736,7 +1963,7 @@ def archive_topic(req: Optional[ArchiveRequest] = None) -> Dict[str, Any]:
             try:
                 with open(TOPIC_FILE, "r", encoding="utf-8") as f:
                     t_data = json.load(f)
-                    topic_name = t_data.get("topic", "").strip()
+                    topic_name = str(t_data.get("topic") or "").strip()
                     reference_scope = t_data.get("reference_scope")
             except Exception:
                 pass
@@ -1751,11 +1978,13 @@ def archive_topic(req: Optional[ArchiveRequest] = None) -> Dict[str, Any]:
 
     if not topic_name:
         state = load_state()
-        topic_name = state.get("topic", "").strip()
+        topic_name = str(state.get("topic") or "").strip()
         if not reference_scope:
             reference_scope = state.get("reference_scope")
     if not topic_name:
-        topic_name = "untitled"
+        # If in standby, nothing to archive, reset and return skipped
+        reset_state()
+        return {"status": "skipped", "message": "Cannot archive empty or not-set topic"}
 
     if not reference_scope:
         state = load_state()
@@ -1763,6 +1992,7 @@ def archive_topic(req: Optional[ArchiveRequest] = None) -> Dict[str, Any]:
 
     target_dir = get_topic_notes_dir(topic_name)
     if not target_dir:
+        reset_state()
         return {"status": "skipped", "message": "Cannot archive empty or not-set topic"}
     target_dir.mkdir(parents=True, exist_ok=True)
     sanitized = target_dir.name
@@ -1864,6 +2094,75 @@ def archive_topic(req: Optional[ArchiveRequest] = None) -> Dict[str, Any]:
                 save_knowledge_graph(kg)
         except Exception:
             pass
+
+    # Overwrite notes/lesson_notes.md with standard placeholder comment
+    NOTES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(NOTES_FILE, "w", encoding="utf-8") as f:
+            f.write(DEFAULT_LESSON_NOTES_PLACEHOLDER)
+    except Exception:
+        pass
+
+    # Overwrite roadmap.mmd with the empty skeleton (graph TD\n)
+    ROADMAP_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(ROADMAP_FILE, "w", encoding="utf-8") as f:
+            f.write("graph TD\n")
+    except Exception:
+        pass
+
+    # Clear active quiz and answer
+    if QUIZ_FILE.exists():
+        try:
+            with open(QUIZ_FILE, "w", encoding="utf-8") as f:
+                json.dump({"questions": []}, f, indent=2)
+        except Exception:
+            pass
+    if ANSWER_FILE.exists():
+        try:
+            with open(ANSWER_FILE, "w", encoding="utf-8") as f:
+                json.dump({"status": "stopped"}, f, indent=2)
+        except Exception:
+            pass
+
+    # Write state/topic.json with standby skeleton
+    TOPIC_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(TOPIC_FILE, "w", encoding="utf-8") as f:
+            json.dump(DEFAULT_TOPIC_SKELETON, f, indent=2)
+    except Exception:
+        pass
+
+    # Write state/curriculum.json with skeleton
+    CURRICULUM_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(CURRICULUM_FILE, "w", encoding="utf-8") as f:
+            json.dump(DEFAULT_CURRICULUM_SKELETON, f, indent=2)
+    except Exception:
+        pass
+
+    delete_pause_flag()
+
+    # Set state["topic"] = None and state["status"] = "standby"
+    blank_state = {
+        "session_active": False,
+        "topic": None,
+        "status": "standby",
+        "phase": "idle",
+        "active_node": None,
+        "active_node_id": None,
+        "current_node": "",
+        "notes": "",
+        "lesson_markdown": "",
+        "dag_mermaid": "graph TD\n",
+        "quiz": None,
+        "active_quiz": None,
+        "latest_answer": None,
+        "quiz_history": []
+    }
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(blank_state, f, indent=2, ensure_ascii=False)
 
     return {"status": "ok", "archive_dir": str(target_dir), "session": session_data}
 
@@ -2031,14 +2330,20 @@ def reset_state() -> Dict[str, Any]:
             with open(KNOWLEDGE_GRAPH_FILE, "w", encoding="utf-8") as f:
                 json.dump(DEFAULT_KNOWLEDGE_GRAPH_SKELETON, f, indent=2)
 
-    # Overwrite state/state.json with clean blank idle structure
+    # Overwrite state/state.json with clean blank standby structure
     blank_state = {
         "session_active": False,
-        "topic": "Not Set",
-        "phase": "IDLE",
+        "topic": None,
+        "status": "standby",
+        "phase": "idle",
         "active_node": None,
+        "active_node_id": None,
+        "current_node": "",
         "notes": "",
+        "lesson_markdown": "",
+        "dag_mermaid": "graph TD\n",
         "quiz": None,
+        "active_quiz": None,
         "latest_answer": None,
         "quiz_history": []
     }
@@ -2051,19 +2356,17 @@ def reset_state() -> Dict[str, Any]:
     return {
         "success": True,
         "status": "ok",
-        "state": {
-            "session_active": False,
-            "topic": "Not Set",
-            "phase": "IDLE",
-            "active_node": None,
-            "notes": "",
-            "quiz": None
-        }
+        "state": blank_state
     }
 
 
 @app.post("/api/shutdown")
+@app.post("/api/kill")
 def shutdown_server():
+    try:
+        reset_state()
+    except Exception:
+        pass
     def kill():
         import time
         time.sleep(0.5)

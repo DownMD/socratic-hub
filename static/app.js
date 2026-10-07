@@ -15,6 +15,16 @@ let mermaidRenderCount = 0;
 let selectedOptionLocal = null;
 let multiAnswersLocal = {};
 let currentQuizSignature = '';
+let isInitialPollComplete = false;
+let isAwaitingAgent = false;
+
+let currentRoadmapMode = null; // 'standby' | 'active'
+let currentNotesMode = null;   // 'standby' | 'active'
+
+function isSessionStandby(state) {
+  if (!state) return true;
+  return !state.topic || state.topic === "Not Set" || state.status === "standby" || state.status === "idle";
+}
 
 function getQuizSignature(quizData) {
   if (!quizData) return '';
@@ -29,11 +39,12 @@ function getQuizSignature(quizData) {
 
 window.addEventListener('mermaid-ready', () => {
   mermaidReady = true;
-  if (cachedState.dag_mermaid) {
+  const isStandby = isSessionStandby(cachedState);
+  if (!isStandby && cachedState.dag_mermaid) {
     renderMermaidDAG(cachedState.dag_mermaid);
   }
   const lessonContainer = document.getElementById('lesson-content');
-  if (lessonContainer) {
+  if (lessonContainer && !isStandby) {
     runMermaidOnNotes(lessonContainer);
   }
 });
@@ -287,51 +298,128 @@ function updateHeader(state) {
   const phaseEl = document.getElementById('header-phase');
   const phaseDotEl = document.getElementById('header-phase-dot');
 
-  topicEl.textContent = state.topic || 'Not Set';
-  phaseEl.textContent = state.phase || 'idle';
+  if (topicEl) topicEl.textContent = state.topic || 'Not Set';
+  if (phaseEl) phaseEl.textContent = state.phase || 'idle';
 
-  // Update Phase styling
   const phase = (state.phase || 'idle').toLowerCase();
-  phaseDotEl.className = 'w-2 h-2 rounded-full ';
-  if (phase === 'probing') {
-    phaseDotEl.className += 'bg-amber-400 shadow-sm shadow-amber-400';
-    phaseEl.className = 'uppercase font-bold tracking-wider text-amber-400';
-  } else if (phase === 'teaching') {
-    phaseDotEl.className += 'bg-indigo-400 shadow-sm shadow-indigo-400';
-    phaseEl.className = 'uppercase font-bold tracking-wider text-indigo-400';
-  } else if (phase === 'evaluating') {
-    phaseDotEl.className += 'bg-violet-400 shadow-sm shadow-violet-400';
-    phaseEl.className = 'uppercase font-bold tracking-wider text-violet-400';
-  } else if (phase === 'paused') {
-    phaseDotEl.className += 'bg-amber-400 shadow-sm shadow-amber-400';
-    phaseEl.className = 'uppercase font-bold tracking-wider text-amber-400';
-  } else {
-    phaseDotEl.className += 'bg-slate-500';
-    phaseEl.className = 'uppercase font-bold tracking-wider text-slate-400';
+  if (phaseDotEl && phaseEl) {
+    if (phase === 'probing') {
+      phaseDotEl.className = 'w-2 h-2 rounded-full bg-amber-400';
+      phaseEl.className = 'uppercase font-semibold tracking-wider text-amber-400 font-mono';
+    } else if (phase === 'teaching') {
+      phaseDotEl.className = 'w-2 h-2 rounded-full bg-sky-400';
+      phaseEl.className = 'uppercase font-semibold tracking-wider text-sky-400 font-mono';
+    } else if (phase === 'evaluating') {
+      phaseDotEl.className = 'w-2 h-2 rounded-full bg-emerald-400';
+      phaseEl.className = 'uppercase font-semibold tracking-wider text-emerald-400 font-mono';
+    } else if (phase === 'paused') {
+      phaseDotEl.className = 'w-2 h-2 rounded-full bg-amber-400';
+      phaseEl.className = 'uppercase font-semibold tracking-wider text-amber-400 font-mono';
+    } else {
+      phaseDotEl.className = 'w-2 h-2 rounded-full bg-zinc-600';
+      phaseEl.className = 'uppercase font-semibold tracking-wider text-zinc-500 font-mono';
+    }
   }
 }
 
-// Helper: Render Mermaid DAG / Roadmap
+// Roadmap D3 Pan/Zoom Persistence State
+let roadmapZoomBehavior = null;
+let currentRoadmapTransform = null;
+let roadmapDragStartPos = null;
+
+function resetRoadmapZoom() {
+  const container = document.getElementById('dag-container');
+  if (!container || !roadmapZoomBehavior) return;
+  const svg = d3.select(container).select('svg');
+  if (svg.empty()) return;
+
+  const scrollArea = document.getElementById('dag-scroll-area');
+  const width = (scrollArea && scrollArea.clientWidth) || container.clientWidth || 400;
+  const height = (scrollArea && scrollArea.clientHeight) || container.clientHeight || 500;
+
+  const g = svg.select('g');
+  if (g.empty()) return;
+  const bbox = g.node().getBBox();
+  if (!bbox || bbox.width === 0 || bbox.height === 0) return;
+
+  const padding = 40;
+  const scale = Math.max(0.4, Math.min(1.15, Math.min((width - padding) / bbox.width, (height - padding) / bbox.height)));
+  const tx = (width - bbox.width * scale) / 2 - bbox.x * scale;
+  const ty = Math.max(20, (height - bbox.height * scale) / 2 - bbox.y * scale);
+
+  const initialTransform = d3.zoomIdentity.translate(tx, ty).scale(scale);
+  currentRoadmapTransform = initialTransform;
+  svg.transition().duration(300).call(roadmapZoomBehavior.transform, initialTransform);
+}
+
+function zoomRoadmapBy(factor) {
+  const container = document.getElementById('dag-container');
+  if (!container || !roadmapZoomBehavior) return;
+  const svg = d3.select(container).select('svg');
+  if (svg.empty()) return;
+  svg.transition().duration(200).call(roadmapZoomBehavior.scaleBy, factor);
+}
+
+function setupRoadmapHUDControls() {
+  const btnIn = document.getElementById('btn-dag-zoom-in');
+  const btnOut = document.getElementById('btn-dag-zoom-out');
+  const btnReset = document.getElementById('btn-dag-reset');
+
+  if (btnIn && !btnIn.dataset.bound) {
+    btnIn.dataset.bound = 'true';
+    btnIn.addEventListener('click', () => zoomRoadmapBy(1.3));
+  }
+  if (btnOut && !btnOut.dataset.bound) {
+    btnOut.dataset.bound = 'true';
+    btnOut.addEventListener('click', () => zoomRoadmapBy(1 / 1.3));
+  }
+  if (btnReset && !btnReset.dataset.bound) {
+    btnReset.dataset.bound = 'true';
+    btnReset.addEventListener('click', () => resetRoadmapZoom());
+  }
+}
+
+const ROADMAP_STANDBY_HTML = '<div class="h-full flex flex-col items-center justify-center p-4 text-center select-none opacity-60"><div class="w-8 h-8 mb-2 rounded border border-slate-800 bg-slate-900/40 flex items-center justify-center text-slate-500"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/></svg></div><span class="text-[11px] font-mono text-slate-400">DAG Roadmap Inactive</span><span class="text-[10px] text-slate-600 mt-0.5">Select a topic or run .teach to compile graph</span></div>';
+
+function renderRoadmapStandby() {
+  const container = document.getElementById('dag-container');
+  if (!container) return;
+  setupRoadmapHUDControls();
+  currentRoadmapMode = 'standby';
+  container.innerHTML = ROADMAP_STANDBY_HTML;
+}
+
+// Helper: Render Mermaid DAG / Roadmap with D3 Zoom & Persistent Camera
 async function renderRoadmap(code) {
   const container = document.getElementById('dag-container');
   if (!container) return;
 
-  // 1. Pre-Render Validation Guard:
-  if (!code || typeof code !== 'string' || !code.trim()) {
-    container.innerHTML = '';
+  setupRoadmapHUDControls();
+
+  const isStandby = isSessionStandby(cachedState);
+  const mermaidCode = code || '';
+  const isRoadmapEmpty = isStandby || !mermaidCode || !mermaidCode.trim() || mermaidCode.trim().split('\n').filter(l => {
+    const s = l.trim();
+    return s && !s.startsWith('classDef') && !s.startsWith('graph') && s !== 'graph TD';
+  }).length === 0;
+
+  if (isStandby || isRoadmapEmpty) {
+    if (currentRoadmapMode !== 'standby' || !container.querySelector('.font-mono')) {
+      renderRoadmapStandby();
+    }
     return;
   }
 
-  const cleanCode = sanitizeMermaidCode(code);
+  currentRoadmapMode = 'active';
+
+  const cleanCode = sanitizeMermaidCode(mermaidCode);
   if (!cleanCode) {
-    container.innerHTML = '';
     return;
   }
 
   // Check if it contains a valid graph directive matching /^\s*(graph|flowchart)\s+(TD|TB|LR|RL)/im
   const validDirective = /^\s*(graph|flowchart)\s+(TD|TB|LR|RL)/im.test(cleanCode);
   if (!validDirective) {
-    container.innerHTML = '';
     return;
   }
 
@@ -341,8 +429,35 @@ async function renderRoadmap(code) {
 
   const id = "mermaid-dag-" + Date.now();
   try {
-    const { svg } = await window.mermaid.render(id, cleanCode);
-    container.innerHTML = svg;
+    const { svg: svgHtml } = await window.mermaid.render(id, cleanCode);
+    container.innerHTML = svgHtml;
+
+    // Attach D3 Zoom to the rendered SVG
+    if (typeof d3 !== 'undefined') {
+      const svg = d3.select(container).select('svg');
+      if (!svg.empty()) {
+        svg.attr('width', '100%').attr('height', '100%').style('max-width', 'none');
+        const g = svg.select('g');
+        if (!g.empty()) {
+          roadmapZoomBehavior = d3.zoom()
+            .scaleExtent([0.4, 3.0])
+            .on('zoom', (event) => {
+              currentRoadmapTransform = event.transform;
+              g.attr('transform', event.transform);
+            });
+
+          svg.call(roadmapZoomBehavior);
+          svg.on('dblclick.zoom', () => resetRoadmapZoom());
+
+          // Persist the roadmap's zoom transform across state re-renders so SVG updates don't reset the camera position
+          if (currentRoadmapTransform) {
+            svg.call(roadmapZoomBehavior.transform, currentRoadmapTransform);
+          } else {
+            resetRoadmapZoom();
+          }
+        }
+      }
+    }
   } catch (err) {
     console.warn("Mermaid fallback:", err);
     cleanupMermaidErrorDOM(container);
@@ -356,6 +471,8 @@ async function renderRoadmap(code) {
 const renderMermaidDAG = renderRoadmap;
 window.renderRoadmap = renderRoadmap;
 window.renderMermaidDAG = renderRoadmap;
+window.resetRoadmapZoom = resetRoadmapZoom;
+window.zoomRoadmapBy = zoomRoadmapBy;
 
 // Backward compatibility shim for notes-scroll-area -> notes-panel
 const _rawGetElementById = document.getElementById.bind(document);
@@ -447,23 +564,173 @@ function splitLessonNotes(markdown, activeNodeId, activeNodeLabel) {
   };
 }
 
+// Global Click-to-Copy Helper for Standby Cheat Sheet
+window.copyToClipboard = function(text, el) {
+  const doFeedback = () => {
+    if (el) {
+      const feedback = el.querySelector('.copy-hint');
+      if (feedback) {
+        const orig = feedback.textContent;
+        feedback.textContent = 'COPIED';
+        feedback.classList.add('text-emerald-400');
+        setTimeout(() => {
+          feedback.textContent = orig;
+          feedback.classList.remove('text-emerald-400');
+        }, 1400);
+      }
+    }
+  };
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(doFeedback).catch(() => {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        doFeedback();
+      } catch (e) {}
+    });
+  } else {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      doFeedback();
+    } catch (e) {}
+  }
+};
+
+function renderNotesStandby() {
+  const container = document.getElementById('lesson-content');
+  if (!container) return;
+  const notesPanel = document.getElementById('notes-panel');
+  const panelNotes = document.getElementById('panel-notes');
+  if (notesPanel) notesPanel.style.overflowY = 'hidden';
+  if (panelNotes) panelNotes.style.overflowY = 'hidden';
+  container.style.overflowY = 'hidden';
+
+  currentNotesMode = 'standby';
+  container.innerHTML = `
+        <div class="h-full flex flex-col justify-center max-w-xl mx-auto px-6 py-3 text-slate-400 select-text overflow-hidden">
+          <!-- Minimalist Header -->
+          <div class="mb-3 pb-2 border-b border-white/[0.06]">
+            <div class="flex items-center gap-2 text-xs font-mono tracking-wider text-slate-300 uppercase">
+              <span class="w-1.5 h-1.5 rounded-full bg-slate-500"></span>
+              <span>Workspace Standby</span>
+              <span class="text-slate-600">/</span>
+              <span class="text-slate-500 text-[11px] lowercase">command reference</span>
+            </div>
+            <p class="text-[12px] text-slate-500 mt-1 font-sans">Click any command to copy it directly to your clipboard.</p>
+          </div>
+
+          <div class="space-y-3.5 font-mono text-xs">
+            <!-- Core Learning -->
+            <div>
+              <div class="text-[10px] tracking-widest uppercase text-slate-500 mb-2">// Core Learning</div>
+              <div class="space-y-1">
+                <div onclick="copyToClipboard('.teach <topic>', this)" class="group flex items-center justify-between py-1.5 px-2 rounded hover:bg-white/[0.04] transition-colors cursor-pointer border border-transparent hover:border-white/[0.05]">
+                  <span class="text-slate-200 group-hover:text-purple-300 transition-colors">.teach &lt;topic&gt;</span>
+                  <div class="flex items-center gap-3">
+                    <span class="text-[11px] text-slate-500 font-sans">Diagnose & generate DAG</span>
+                    <span class="copy-hint text-[9px] text-slate-600 group-hover:text-slate-400 font-mono">COPY</span>
+                  </div>
+                </div>
+
+                <div onclick="copyToClipboard('.teach <topic> --ref <scope>', this)" class="group flex items-center justify-between py-1.5 px-2 rounded hover:bg-white/[0.04] transition-colors cursor-pointer border border-transparent hover:border-white/[0.05]">
+                  <span class="text-slate-200 group-hover:text-purple-300 transition-colors">.teach &lt;topic&gt; --ref &lt;scope&gt;</span>
+                  <div class="flex items-center gap-3">
+                    <span class="text-[11px] text-slate-500 font-sans">Scope material reference</span>
+                    <span class="copy-hint text-[9px] text-slate-600 group-hover:text-slate-400 font-mono">COPY</span>
+                  </div>
+                </div>
+
+                <div onclick="copyToClipboard('.teach <topic> --domain <name>', this)" class="group flex items-center justify-between py-1.5 px-2 rounded hover:bg-white/[0.04] transition-colors cursor-pointer border border-transparent hover:border-white/[0.05]">
+                  <span class="text-slate-200 group-hover:text-purple-300 transition-colors">.teach &lt;topic&gt; --domain &lt;name&gt;</span>
+                  <div class="flex items-center gap-3">
+                    <span class="text-[11px] text-slate-500 font-sans">Explicit subject domain</span>
+                    <span class="copy-hint text-[9px] text-slate-600 group-hover:text-slate-400 font-mono">COPY</span>
+                  </div>
+                </div>
+
+                <div onclick="copyToClipboard('.review <topic>', this)" class="group flex items-center justify-between py-1.5 px-2 rounded hover:bg-white/[0.04] transition-colors cursor-pointer border border-transparent hover:border-white/[0.05]">
+                  <span class="text-slate-200 group-hover:text-purple-300 transition-colors">.review &lt;topic&gt;</span>
+                  <div class="flex items-center gap-3">
+                    <span class="text-[11px] text-slate-500 font-sans">Targeted retrieval quiz</span>
+                    <span class="copy-hint text-[9px] text-slate-600 group-hover:text-slate-400 font-mono">COPY</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Session Management -->
+            <div>
+              <div class="text-[10px] tracking-widest uppercase text-slate-500 mb-2">// Session Controls</div>
+              <div class="space-y-1">
+                <div onclick="copyToClipboard('.pause', this)" class="group flex items-center justify-between py-1.5 px-2 rounded hover:bg-white/[0.04] transition-colors cursor-pointer border border-transparent hover:border-white/[0.05]">
+                  <span class="text-slate-300 group-hover:text-slate-100 transition-colors">.pause</span>
+                  <div class="flex items-center gap-3">
+                    <span class="text-[11px] text-slate-500 font-sans">Suspend active teaching loop</span>
+                    <span class="copy-hint text-[9px] text-slate-600 group-hover:text-slate-400 font-mono">COPY</span>
+                  </div>
+                </div>
+
+                <div onclick="copyToClipboard('.resume', this)" class="group flex items-center justify-between py-1.5 px-2 rounded hover:bg-white/[0.04] transition-colors cursor-pointer border border-transparent hover:border-white/[0.05]">
+                  <span class="text-slate-300 group-hover:text-slate-100 transition-colors">.resume</span>
+                  <div class="flex items-center gap-3">
+                    <span class="text-[11px] text-slate-500 font-sans">Resume active lesson & quiz</span>
+                    <span class="copy-hint text-[9px] text-slate-600 group-hover:text-slate-400 font-mono">COPY</span>
+                  </div>
+                </div>
+
+                <div onclick="copyToClipboard('.archive', this)" class="group flex items-center justify-between py-1.5 px-2 rounded hover:bg-white/[0.04] transition-colors cursor-pointer border border-transparent hover:border-white/[0.05]">
+                  <span class="text-slate-300 group-hover:text-slate-100 transition-colors">.archive</span>
+                  <div class="flex items-center gap-3">
+                    <span class="text-[11px] text-slate-500 font-sans">Save topic notes & graph to library</span>
+                    <span class="copy-hint text-[9px] text-slate-600 group-hover:text-slate-400 font-mono">COPY</span>
+                  </div>
+                </div>
+
+                <div onclick="copyToClipboard('.reset', this)" class="group flex items-center justify-between py-1.5 px-2 rounded hover:bg-white/[0.04] transition-colors cursor-pointer border border-transparent hover:border-white/[0.05]">
+                  <span class="text-slate-400 group-hover:text-rose-300 transition-colors">.kill / .reset</span>
+                  <div class="flex items-center gap-3">
+                    <span class="text-[11px] text-slate-500 font-sans">Reset workspace to standby</span>
+                    <span class="copy-hint text-[9px] text-slate-600 group-hover:text-slate-400 font-mono">COPY</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+  `;
+}
+
 // Helper: Render Lesson Markdown + Viewport Separation + KaTeX
 function renderLesson(markdown, activeNodeId = null, activeNodeLabel = null) {
   const container = document.getElementById('lesson-content');
   if (!container) return;
 
-  if (!markdown || !markdown.trim()) {
-    container.innerHTML = `
-      <div class="py-16 text-center text-slate-500">
-        <svg class="w-10 h-10 mx-auto mb-3 opacity-30 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
-        </svg>
-        <p class="text-xs">No lesson notes available yet.</p>
-        <p class="text-[11px] text-slate-600 mt-1">Teaching stream will populate and render math in real-time.</p>
-      </div>
-    `;
+  const isStandby = isSessionStandby(cachedState);
+  const isNotesEmpty = isStandby || !markdown || !markdown.trim() || markdown.trim().startsWith('<!--');
+
+  if (isStandby || isNotesEmpty) {
+    if (currentNotesMode !== 'standby' || !container.querySelector('.tracking-widest')) {
+      renderNotesStandby();
+    }
     return;
   }
+
+  currentNotesMode = 'active';
+  const notesPanel = document.getElementById('notes-panel');
+  const panelNotes = document.getElementById('panel-notes');
+  if (notesPanel) notesPanel.style.overflowY = 'auto';
+  if (panelNotes) panelNotes.style.overflowY = 'auto';
+  container.style.overflowY = 'auto';
 
   const effectiveActiveId = activeNodeId || (cachedState && (cachedState.active_node_id || cachedState.active_node)) || null;
   const effectiveActiveLabel = activeNodeLabel || (cachedState && cachedState.active_node) || null;
@@ -518,16 +785,28 @@ function renderLesson(markdown, activeNodeId = null, activeNodeLabel = null) {
   runMermaidOnNotes(container);
 
   // Reset scroll position so active lesson heading is immediately visible at the top
-  const panelNotes = document.getElementById('panel-notes');
   if (panelNotes) {
     panelNotes.scrollTop = 0;
   }
 }
 
+// Backward-compatible alias
+const updateLessonNotes = renderLesson;
+window.renderLesson = renderLesson;
+window.updateLessonNotes = updateLessonNotes;
+
 // Helper: Render Active Quiz
 function renderQuiz(quizData, latestAnswer) {
   const container = document.getElementById('quiz-container');
   const pill = document.getElementById('quiz-status-pill');
+
+  if (isAwaitingAgent) {
+    const newQuizSig = getQuizSignature(quizData);
+    if (newQuizSig && newQuizSig === currentQuizSignature) {
+      return;
+    }
+    isAwaitingAgent = false;
+  }
 
   if (!quizData) {
     if (pill) {
@@ -592,7 +871,9 @@ function renderQuiz(quizData, latestAnswer) {
       pill.className = 'text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700/60';
     }
     if (container) {
-      container.innerHTML = `<div class="quiz-empty py-16 text-center text-slate-500 font-mono text-xs">Awaiting checkpoint assessment...</div>`;
+      if (isInitialPollComplete) {
+        container.innerHTML = `<div class="quiz-empty py-16 text-center text-slate-500 font-mono text-xs">Awaiting checkpoint assessment...</div>`;
+      }
     }
     return;
   }
@@ -621,11 +902,11 @@ function renderQuiz(quizData, latestAnswer) {
   const answeredCount = Object.keys(multiAnswersLocal).filter(k => multiAnswersLocal[k] !== undefined && multiAnswersLocal[k] !== null).length;
   const allAnswered = answeredCount === questions.length;
 
-  let html = `<div class="space-y-6">`;
+  let html = `<div class="space-y-4">`;
   html += `
-    <div class="flex items-center justify-between text-xs font-mono text-slate-400 pb-2 border-b border-slate-800">
-      <span class="font-semibold text-indigo-300">[BATCH ASSESSMENT: ${questions.length} QUESTION${questions.length > 1 ? 'S' : ''}]</span>
-      <span class="text-[11px] ${allAnswered ? 'text-emerald-400 font-semibold' : 'text-slate-500'}">${answeredCount}/${questions.length} Selected</span>
+    <div class="flex items-center justify-between text-xs font-mono text-zinc-400 pb-2 border-b border-[#27272a]">
+      <span class="font-semibold text-zinc-200">[BATCH ASSESSMENT: ${questions.length} QUESTION${questions.length > 1 ? 'S' : ''}]</span>
+      <span class="text-[11px] ${allAnswered ? 'text-emerald-400 font-semibold' : 'text-zinc-500'}">${answeredCount}/${questions.length} Selected</span>
     </div>
   `;
 
@@ -646,55 +927,55 @@ function renderQuiz(quizData, latestAnswer) {
     }
 
     html += `
-      <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow-lg space-y-4">
+      <div class="bg-[#131419] border border-[#27272a] rounded-md p-3.5 space-y-3">
         <div class="flex items-start gap-2.5">
-          <span class="w-6 h-6 rounded-md bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold text-xs shrink-0 mt-0.5">Q${qIdx + 1}</span>
-          <div class="text-sm font-semibold text-slate-100 leading-snug">
+          <span class="w-5 h-5 rounded bg-[#18181b] border border-[#27272a] text-zinc-300 flex items-center justify-center font-mono text-[10px] font-bold shrink-0 mt-0.5">Q${qIdx + 1}</span>
+          <div class="text-xs font-semibold text-zinc-100 leading-snug">
             ${escapeHtml(questionText)}
           </div>
         </div>
 
-        <div class="space-y-2 pt-1">
+        <div class="space-y-1.5 pt-1">
     `;
 
     options.forEach((opt, optIdx) => {
-      let btnStyle = "w-full text-left p-3 rounded-lg border text-xs font-medium transition-all flex items-start gap-3 ";
+      let btnStyle = "w-full text-left p-2.5 rounded-md border text-xs font-medium transition-all flex items-start gap-2.5 ";
       const letter = String.fromCharCode(65 + optIdx);
 
       if (!isGraded) {
         if (optIdx === chosenIdx) {
-          btnStyle += "bg-indigo-950/70 border-indigo-500 text-indigo-100 ring-1 ring-indigo-500/50 shadow-md shadow-indigo-950/50 cursor-pointer";
+          btnStyle += "bg-sky-950/30 border-sky-500 text-sky-100 ring-1 ring-sky-500/40 cursor-pointer";
         } else {
-          btnStyle += "bg-slate-800/60 border-slate-700/60 text-slate-300 hover:bg-slate-800 hover:border-indigo-500/60 hover:text-white cursor-pointer";
+          btnStyle += "bg-[#16171b] border-[#27272a] text-zinc-300 hover:bg-[#1c1d22] hover:border-[#3f3f46] hover:text-white cursor-pointer";
         }
         html += `
           <button type="button" onclick="selectMultiOption(${qIdx}, ${optIdx})" class="${btnStyle}">
-            <span class="w-5 h-5 rounded-full border ${optIdx === chosenIdx ? 'border-indigo-400 bg-indigo-500/30 text-indigo-300' : 'border-current'} flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5">${letter}</span>
+            <span class="w-4 h-4 rounded border ${optIdx === chosenIdx ? 'border-sky-400 bg-sky-500/20 text-sky-300' : 'border-[#27272a] bg-[#18181b] text-zinc-400'} flex items-center justify-center text-[9px] font-mono font-bold shrink-0 mt-0.5">${letter}</span>
             <span class="quiz-option-text flex-1">${escapeHtml(opt)}</span>
-            ${optIdx === chosenIdx ? `<span class="w-2 h-2 rounded-full bg-indigo-400 shrink-0 self-center"></span>` : ''}
+            ${optIdx === chosenIdx ? `<span class="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0 self-center"></span>` : ''}
           </button>
         `;
       } else {
         // Graded mode
         if (optIdx === chosenIdx) {
           if (optIdx === qCorrectIdx) {
-            btnStyle += "bg-emerald-950/60 border-emerald-500 text-emerald-200 shadow-md shadow-emerald-950/50 cursor-default";
+            btnStyle += "bg-emerald-950/40 border-emerald-500 text-emerald-200 cursor-default";
           } else {
-            btnStyle += "bg-rose-950/60 border-rose-500 text-rose-200 shadow-md shadow-rose-950/50 cursor-default";
+            btnStyle += "bg-rose-950/40 border-rose-500 text-rose-200 cursor-default";
           }
         } else if (optIdx === qCorrectIdx) {
-          btnStyle += "bg-emerald-950/30 border-emerald-500/50 text-emerald-300/80 cursor-default";
+          btnStyle += "bg-emerald-950/20 border-emerald-500/40 text-emerald-300/80 cursor-default";
         } else {
-          btnStyle += "bg-slate-900/40 border-slate-800 text-slate-500 cursor-not-allowed opacity-50";
+          btnStyle += "bg-[#121316] border-[#27272a] text-zinc-600 cursor-not-allowed opacity-50";
         }
 
         html += `
           <button type="button" disabled class="${btnStyle}">
-            <span class="w-5 h-5 rounded-full border border-current flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5">${letter}</span>
+            <span class="w-4 h-4 rounded border border-current flex items-center justify-center text-[9px] font-mono font-bold shrink-0 mt-0.5">${letter}</span>
             <span class="quiz-option-text flex-1">${escapeHtml(opt)}</span>
             ${optIdx === chosenIdx ? (optIdx === qCorrectIdx ? 
-              `<svg class="w-4 h-4 text-emerald-400 shrink-0 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>` : 
-              `<svg class="w-4 h-4 text-rose-400 shrink-0 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>`) : ''}
+              `<svg class="w-3.5 h-3.5 text-emerald-400 shrink-0 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>` : 
+              `<svg class="w-3.5 h-3.5 text-rose-400 shrink-0 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>`) : ''}
           </button>
         `;
       }
@@ -705,14 +986,14 @@ function renderQuiz(quizData, latestAnswer) {
     if (isGraded && q.explanation) {
       const isCorrect = (chosenIdx === qCorrectIdx);
       html += `
-        <div class="mt-4 pt-3 border-t border-slate-800/80">
-          <div class="p-3.5 rounded-lg ${isCorrect ? 'bg-emerald-950/30 border border-emerald-500/30' : 'bg-rose-950/30 border border-rose-500/30'}">
-            <div class="flex items-center gap-2 mb-1.5 font-mono">
+        <div class="mt-3 pt-2.5 border-t border-[#27272a]">
+          <div class="p-3 rounded-md ${isCorrect ? 'bg-emerald-950/30 border border-emerald-500/30' : 'bg-rose-950/30 border border-rose-500/30'}">
+            <div class="flex items-center gap-2 mb-1 font-mono">
               <span class="text-xs font-bold ${isCorrect ? 'text-emerald-400' : 'text-rose-400'}">
                 ${isCorrect ? '[CORRECT ASSESSMENT]' : '[INCORRECT ASSESSMENT]'}
               </span>
             </div>
-            <div class="text-xs text-slate-300 leading-relaxed">
+            <div class="text-xs text-zinc-300 leading-relaxed">
               ${escapeHtml(q.explanation)}
             </div>
           </div>
@@ -726,29 +1007,29 @@ function renderQuiz(quizData, latestAnswer) {
   // Bottom Action / Status Area
   if (!isGraded) {
     html += `
-      <div class="pt-2 flex items-center gap-2">
-        <button id="btn-submit-assessment" type="button" ${allAnswered ? '' : 'disabled'} onclick="submitBatchAssessment()" class="flex-1 py-3.5 px-4 rounded-xl font-mono text-xs font-bold transition-all flex items-center justify-center gap-2 ${allAnswered ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-950/50 cursor-pointer' : 'bg-slate-800/80 border border-slate-700/60 text-slate-500 cursor-not-allowed opacity-60'}">
-          <span>${allAnswered ? '[ SUBMIT ASSESSMENT ]' : `[ SELECT ALL ANSWERS TO SUBMIT (${answeredCount}/${questions.length}) ]`}</span>
+      <div class="pt-1 flex items-center gap-2">
+        <button id="btn-submit-assessment" type="button" ${allAnswered ? '' : 'disabled'} onclick="submitBatchAssessment()" class="flex-1 py-2.5 px-4 rounded-md font-mono text-xs font-semibold transition-all flex items-center justify-center gap-2 ${allAnswered ? 'bg-zinc-100 hover:bg-white text-zinc-950 cursor-pointer shadow-sm' : 'bg-[#18181b] border border-[#27272a] text-zinc-600 cursor-not-allowed opacity-60'}">
+          <span>${allAnswered ? 'Submit Assessment' : `Select All Answers to Submit (${answeredCount}/${questions.length})`}</span>
         </button>
-        <button type="button" onclick="pauseSession()" class="btn-secondary py-3.5 px-3 rounded-xl font-mono text-xs font-semibold text-slate-400 hover:text-white bg-slate-900 border border-slate-700/80 hover:border-slate-500 transition-all cursor-pointer shrink-0" title="Pause session">[PAUSE]</button>
+        <button type="button" onclick="pauseSession()" class="py-2.5 px-3 rounded-md font-mono text-xs font-medium text-zinc-400 hover:text-white bg-[#18181b] border border-[#27272a] hover:border-[#3f3f46] transition-all cursor-pointer shrink-0" title="Pause session">Pause</button>
       </div>
     `;
   } else {
     const isPassed = Boolean(latestAnswer.passed || latestAnswer.correct || (latestAnswer.score !== undefined && latestAnswer.score >= 0.70));
     const correctCount = latestAnswer.correct_count !== undefined ? latestAnswer.correct_count : (isPassed ? questions.length : 0);
     html += `
-      <div class="pt-2 space-y-3 font-mono">
-        <div class="p-4 rounded-xl border text-center space-y-1 ${isPassed ? 'bg-emerald-950/40 border-emerald-500 text-emerald-200' : 'bg-rose-950/40 border-rose-500 text-rose-200'}">
-          <div class="text-sm font-bold">${isPassed ? '[ASSESSMENT PASSED]' : '[ASSESSMENT FAILED]'}</div>
-          <div class="text-xs">${correctCount} / ${questions.length} correct</div>
+      <div class="pt-1 space-y-2.5 font-mono">
+        <div class="p-3 rounded-md border text-center space-y-1 ${isPassed ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-200' : 'bg-rose-950/30 border-rose-500/40 text-rose-200'}">
+          <div class="text-xs font-bold">${isPassed ? '[ASSESSMENT PASSED]' : '[ASSESSMENT FAILED]'}</div>
+          <div class="text-[11px]">${correctCount} / ${questions.length} correct</div>
         </div>
-        ${!isPassed ? `
-          <button type="button" onclick="retryAssessment()" class="w-full py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 transition-all cursor-pointer">
-            [ RETRY ASSESSMENT ]
-          </button>
-        ` : `
+        ${isPassed ? `
           <div class="text-center text-xs text-emerald-400 font-semibold py-1">
             [MASTERY VERIFIED - ADVANCING TO NEXT NODE]
+          </div>
+        ` : `
+          <div class="text-center text-xs text-rose-400 font-semibold py-1">
+            [AWAITING AGENT REMEDIATION]
           </div>
         `}
       </div>
@@ -801,7 +1082,28 @@ async function submitBatchAssessment() {
     if (resp.ok) {
       const data = await resp.json();
       cachedState.latest_answer = data.latest_answer || data.evaluation;
-      renderQuiz(cachedState.active_quiz, cachedState.latest_answer);
+      isAwaitingAgent = true;
+
+      const quizContainer = document.getElementById('quiz-container');
+      if (quizContainer) {
+        quizContainer.innerHTML = `
+          <div class="h-full flex flex-col items-center justify-center p-6 text-center select-none">
+            <div class="w-10 h-10 mb-3 rounded-full border border-sky-800/80 bg-sky-950/40 flex items-center justify-center text-sky-400 animate-pulse">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            </div>
+            <h4 class="text-xs font-mono font-semibold text-slate-200 uppercase tracking-wider mb-1">Assessment Submitted</h4>
+            <p class="text-[11px] text-slate-400 max-w-[240px] mb-3">Compiling lesson notes and updating roadmap...</p>
+            <div class="p-2.5 rounded bg-slate-900/80 border border-slate-800 text-[11px] font-mono text-slate-400 max-w-xs">
+              Return to your <span class="text-sky-300">Editor Chat</span>. Once generation finishes, reply <code class="text-emerald-400 bg-black/40 px-1 py-0.5 rounded">Ready</code> to proceed.
+            </div>
+          </div>
+        `;
+      }
+      const pill = document.getElementById('quiz-status-pill');
+      if (pill) {
+        pill.textContent = 'Submitted';
+        pill.className = 'text-[10px] font-mono px-2 py-0.5 rounded-full bg-sky-950/60 text-sky-300 border border-sky-500/30';
+      }
     }
   } catch (err) {
     console.error('Failed to submit batch assessment:', err);
@@ -816,14 +1118,8 @@ async function submitSingleAssessment() {
   await submitBatchAssessment();
 }
 
-function retryAssessment() {
-  multiAnswersLocal = {};
-  selectedOptionLocal = null;
-  if (cachedState) {
-    cachedState.latest_answer = null;
-    renderQuiz(cachedState.active_quiz, null);
-  }
-}
+const submitBatchQuiz = submitBatchAssessment;
+const submitAnswer = submitSingleAssessment;
 
 function pauseSession() {
   if (!confirm('Are you sure you want to pause the session?')) return;
@@ -1153,13 +1449,10 @@ function exitReferenceMode() {
   const activeMarkdown = (cachedState && cachedState.lesson_markdown) || cachedActiveNote || '';
   if (lessonContainer) {
     if (activeMarkdown) {
+      currentNotesMode = null;
       renderLesson(activeMarkdown, cachedState.active_node_id, cachedState.active_node);
     } else {
-      lessonContainer.innerHTML = `
-        <div class="py-16 text-center text-slate-500">
-          <p class="text-xs">No active lesson notes available yet.</p>
-        </div>
-      `;
+      renderLesson('');
     }
   }
 }
@@ -1269,7 +1562,19 @@ function setupRoadmapClickDelegation() {
   const container = document.getElementById('dag-container');
   if (!container) return;
 
+  container.addEventListener('pointerdown', (e) => {
+    roadmapDragStartPos = { x: e.clientX, y: e.clientY };
+  });
+
   container.addEventListener('click', (e) => {
+    // Differentiate click from drag on roadmap nodes (movement threshold > 5px)
+    if (roadmapDragStartPos) {
+      const dist = Math.hypot(e.clientX - roadmapDragStartPos.x, e.clientY - roadmapDragStartPos.y);
+      if (dist > 5) {
+        return; // Suppress note navigation when dragging/panning
+      }
+    }
+
     const nodeEl = e.target.closest('.node');
     if (!nodeEl) return;
 
@@ -1398,24 +1703,8 @@ async function resetSession(skipConfirm = false) {
       updatePausedSessionCard(cachedState);
 
       // Clear roadmap and notes views
-      const dagContainer = document.getElementById('dag-container');
-      if (dagContainer) {
-        dagContainer.innerHTML = `
-          <div class="py-16 text-center text-slate-500 font-mono text-xs">
-            <p>[NO ROADMAP GENERATED]</p>
-            <p class="text-[11px] text-slate-600 mt-1">DAG will render upon curriculum initialization.</p>
-          </div>
-        `;
-      }
-      const lessonContent = document.getElementById('lesson-content');
-      if (lessonContent) {
-        lessonContent.innerHTML = `
-          <div class="py-16 text-center text-slate-500 font-mono text-xs">
-            <p>[NO LESSON NOTES AVAILABLE]</p>
-            <p class="text-[11px] text-slate-600 mt-1">Teaching stream will render notes and math in real-time.</p>
-          </div>
-        `;
-      }
+      renderRoadmapStandby();
+      renderNotesStandby();
       renderQuiz(null, null);
 
       showToast("Workspace state reset to clean idle standby.");
@@ -1427,8 +1716,14 @@ async function resetSession(skipConfirm = false) {
 
 // Reactive State Dispatcher
 function updateUI(newState, force = false) {
+  // Check the actual session state from /api/state:
+  const isStandby = !newState.topic || newState.topic === "Not Set" || newState.status === "standby" || newState.status === "idle";
+
+  const prevCachedState = cachedState;
+  cachedState = newState;
+
   // Header update
-  if (force || newState.topic !== cachedState.topic || newState.phase !== cachedState.phase) {
+  if (force || newState.topic !== prevCachedState.topic || newState.phase !== prevCachedState.phase) {
     updateHeader(newState);
   }
 
@@ -1439,74 +1734,75 @@ function updateUI(newState, force = false) {
   // Update paused session card inside Idle Center
   updatePausedSessionCard(newState);
 
-  // Automatic Real-Time Transition:
-  const phaseUpper = String(newState.phase || '').toUpperCase();
-  const isSessionActive = Boolean(
-    newState.session_active === true ||
-    (phaseUpper && phaseUpper !== 'IDLE' && newState.topic && newState.topic !== 'Not Set')
-  );
+  if (isStandby) {
+    if (badgeEl) {
+      badgeEl.textContent = '[STANDBY]';
+      badgeEl.className = 'text-[10px] uppercase font-mono font-semibold tracking-wider px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700/60';
+    }
 
+    if (!isStudyViewExplicitlyActive && studyEl && idleEl) {
+      studyEl.classList.add('hidden');
+      idleEl.classList.remove('hidden');
+    }
+
+    // Force currentRoadmapMode = 'standby' and render the minimal roadmap placeholder (do not render stale roadmap.mmd content)
+    if (currentRoadmapMode !== 'standby' || force) {
+      renderRoadmapStandby();
+    }
+
+    // Force currentNotesMode = 'standby' and render the command reference cheat sheet (do not render stale notes/lesson_notes.md content)
+    if (currentNotesMode !== 'standby' || force) {
+      renderNotesStandby();
+    }
+
+    // Ensure the assessment column displays the idle awaiting state
+    renderQuiz(null, null);
+
+    return;
+  }
+
+  // Automatic Real-Time Transition when isStandby is FALSE and a real topic is actively mounted:
   if (studyEl && idleEl) {
-    if (isSessionActive) {
-      // When state.session_active === true (or phase is not IDLE):
-      // If #workspace-study is currently hidden, transition automatically!
-      if (studyEl.classList.contains('hidden')) {
-        isStudyViewExplicitlyActive = true;
-        idleEl.classList.add('hidden');
-        studyEl.classList.remove('hidden');
-        if (badgeEl) {
-          badgeEl.textContent = '[ACTIVE]';
-          badgeEl.className = 'text-[10px] uppercase font-mono font-semibold tracking-wider px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm animate-pulse';
-        }
-        if (newState.dag_mermaid) {
-          renderMermaidDAG(newState.dag_mermaid);
-        }
-        if (newState.lesson_markdown) {
-          renderLesson(newState.lesson_markdown, newState.active_node_id, newState.active_node);
-        }
-      } else {
-        if (badgeEl && badgeEl.textContent !== '[ACTIVE]') {
-          badgeEl.textContent = '[ACTIVE]';
-          badgeEl.className = 'text-[10px] uppercase font-mono font-semibold tracking-wider px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm animate-pulse';
-        }
+    if (studyEl.classList.contains('hidden')) {
+      isStudyViewExplicitlyActive = true;
+      idleEl.classList.add('hidden');
+      studyEl.classList.remove('hidden');
+      if (badgeEl) {
+        badgeEl.textContent = '[ACTIVE]';
+        badgeEl.className = 'text-[10px] uppercase font-mono font-semibold tracking-wider px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm animate-pulse';
       }
     } else {
-      // When state.session_active === false or state.phase === "IDLE":
-      // Keep #workspace-idle visible and #workspace-study hidden unless explicitly resumed
-      if (!isStudyViewExplicitlyActive) {
-        studyEl.classList.add('hidden');
-        idleEl.classList.remove('hidden');
-        if (badgeEl) {
-          badgeEl.textContent = '[STANDBY]';
-          badgeEl.className = 'text-[10px] uppercase font-mono font-semibold tracking-wider px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700/60';
-        }
+      if (badgeEl && badgeEl.textContent !== '[ACTIVE]') {
+        badgeEl.textContent = '[ACTIVE]';
+        badgeEl.className = 'text-[10px] uppercase font-mono font-semibold tracking-wider px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm animate-pulse';
       }
     }
   }
 
-  // Column 1: DAG Roadmap
-  if (force || newState.dag_mermaid !== cachedState.dag_mermaid) {
+  // Column 1: DAG Roadmap (Only render active roadmap nodes when isStandby is FALSE)
+  if (force || currentRoadmapMode !== 'active' || newState.dag_mermaid !== prevCachedState.dag_mermaid) {
     renderMermaidDAG(newState.dag_mermaid);
   }
 
-  // Column 2: Lesson Notes
+  // Column 2: Lesson Notes (Only render active lesson note markdown when isStandby is FALSE)
   if (!isReferenceMode) {
-    const activeNodeChanged = (newState.active_node_id && newState.active_node_id !== cachedState.active_node_id) ||
-                              (newState.active_node && newState.active_node !== cachedState.active_node);
-    if (force || newState.lesson_markdown !== cachedState.lesson_markdown || activeNodeChanged) {
+    const activeNodeChanged = (newState.active_node_id && newState.active_node_id !== prevCachedState.active_node_id) ||
+                              (newState.active_node && newState.active_node !== prevCachedState.active_node);
+    if (force || currentNotesMode !== 'active' || newState.lesson_markdown !== prevCachedState.lesson_markdown || activeNodeChanged) {
       cachedActiveNote = newState.lesson_markdown;
       renderLesson(newState.lesson_markdown, newState.active_node_id, newState.active_node);
     }
   }
 
   // Column 3: Quiz
-  const oldQuizSig = getQuizSignature(cachedState.active_quiz);
+  const oldQuizSig = getQuizSignature(prevCachedState.active_quiz);
   const newQuizSig = getQuizSignature(newState.active_quiz);
   const quizSignatureChanged = oldQuizSig !== newQuizSig;
-  const quizChanged = JSON.stringify(newState.active_quiz) !== JSON.stringify(cachedState.active_quiz);
-  const answerChanged = JSON.stringify(newState.latest_answer) !== JSON.stringify(cachedState.latest_answer);
+  const quizChanged = JSON.stringify(newState.active_quiz) !== JSON.stringify(prevCachedState.active_quiz);
+  const answerChanged = JSON.stringify(newState.latest_answer) !== JSON.stringify(prevCachedState.latest_answer);
   if (force || quizChanged || answerChanged) {
     if (quizSignatureChanged) {
+      isAwaitingAgent = false;
       selectedOptionLocal = null;
       multiAnswersLocal = {};
       currentQuizSignature = newQuizSig;
@@ -1520,9 +1816,10 @@ function updateUI(newState, force = false) {
     }
     renderQuiz(newState.active_quiz, newState.latest_answer);
   }
-
-  cachedState = newState;
 }
+
+const renderState = updateUI;
+window.renderState = updateUI;
 
 
 // Command Click-to-Copy Helper
@@ -1780,7 +2077,26 @@ async function pollState() {
     const response = await fetch('/api/state');
     if (response.ok) {
       const state = await response.json();
+      const wasFirstPoll = !isInitialPollComplete;
+      if (wasFirstPoll) {
+        isInitialPollComplete = true;
+      }
       updateUI(state);
+      // If this was the first poll and state was idle/empty, ensure empty placeholders render smoothly
+      if (wasFirstPoll) {
+        if (!state.dag_mermaid) {
+          renderRoadmap('');
+        }
+        if (!state.notes && !state.lesson_markdown) {
+          renderLesson('', null, null);
+        }
+        if (!state.quiz && !state.active_quiz) {
+          const quizContainer = document.getElementById('quiz-container');
+          if (quizContainer && (!quizContainer.hasChildNodes() || quizContainer.innerText.trim() === '')) {
+            renderQuiz(null, null);
+          }
+        }
+      }
     }
   } catch (err) {
     // Network or server restart blip, ignore silently
@@ -1808,6 +2124,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupGraphNavControls();
   setupGraphResizer();
   setupRoadmapResizer();
+  setupRoadmapHUDControls();
   setupRoadmapClickDelegation();
   setupCollapsiblePanels();
 });
@@ -1822,17 +2139,28 @@ let hoverNode = null;
 const neighborsMap = new Map(); // nodeId -> Set of neighbor IDs
 const linksMap = new Map();     // nodeId -> Set of link objects
 let searchQuery = '';
+let topicAngleMap = new Map();
+let coreRadius = 140;
+let depthSpacing = 75;
+
+let lineageNodeIds = new Set();
+let lineageLinkSet = new Set();
+const incomingPrereqMap = new Map(); // targetId -> Array of { sourceId, link }
 
 function rebuildAdjacencyMaps(nodes, links) {
   neighborsMap.clear();
   linksMap.clear();
+  incomingPrereqMap.clear();
 
   const degreeCounts = new Map();
+  const inDegreeCounts = new Map();
 
   nodes.forEach(node => {
     neighborsMap.set(node.id, new Set());
     linksMap.set(node.id, new Set());
+    incomingPrereqMap.set(node.id, []);
     degreeCounts.set(node.id, 0);
+    inDegreeCounts.set(node.id, 0);
   });
 
   links.forEach(link => {
@@ -1849,19 +2177,99 @@ function rebuildAdjacencyMaps(nodes, links) {
     linksMap.get(srcId).add(link);
     linksMap.get(tgtId).add(link);
 
+    if (!incomingPrereqMap.has(tgtId)) incomingPrereqMap.set(tgtId, []);
+    incomingPrereqMap.get(tgtId).push({ sourceId: srcId, link });
+
     degreeCounts.set(srcId, (degreeCounts.get(srcId) || 0) + 1);
     degreeCounts.set(tgtId, (degreeCounts.get(tgtId) || 0) + 1);
+    inDegreeCounts.set(tgtId, (inDegreeCounts.get(tgtId) || 0) + 1);
   });
 
+  // 1. Compute Topological Prerequisite Depth within topics:
+  // Roots: origin === "diagnostic" || badge_label === "Baseline Knowledge" || inDegree === 0
+  const nodeMap = new Map();
   nodes.forEach(node => {
-    const degree = degreeCounts.get(node.id) || 0;
-    node.__degree = degree;
-    node.__size = Math.max(3.5, Math.min(12, 3 + Math.sqrt(degree) * 2));
+    nodeMap.set(node.id, node);
+    const origin = String(node.origin || '').toLowerCase();
+    const badge = String(node.badge_label || '').toLowerCase();
+    const inDeg = inDegreeCounts.get(node.id) || 0;
+    const isRoot = origin === 'diagnostic' || badge === 'baseline knowledge' || inDeg === 0;
+    node.__isRoot = isRoot;
+    node.__depth = isRoot ? 0 : null;
   });
+
+  // Traverse downstream: child.depth = Math.max(child.depth, parent.depth + 1)
+  let changed = true;
+  let iterations = 0;
+  while (changed && iterations < 50) {
+    changed = false;
+    iterations++;
+    links.forEach(link => {
+      const srcId = (typeof link.source === 'object' && link.source !== null) ? link.source.id : link.source;
+      const tgtId = (typeof link.target === 'object' && link.target !== null) ? link.target.id : link.target;
+      const srcNode = nodeMap.get(srcId);
+      const tgtNode = nodeMap.get(tgtId);
+      if (srcNode && tgtNode && srcNode.__depth !== null && srcNode.__depth !== undefined) {
+        const candidateDepth = srcNode.__depth + 1;
+        if (tgtNode.__depth === null || tgtNode.__depth === undefined || candidateDepth > tgtNode.__depth) {
+          tgtNode.__depth = candidateDepth;
+          changed = true;
+        }
+      }
+    });
+  }
+
+  nodes.forEach(node => {
+    if (node.__depth === null || node.__depth === undefined) {
+      node.__depth = 0;
+    }
+    const inDeg = inDegreeCounts.get(node.id) || 0;
+    const totalDeg = degreeCounts.get(node.id) || 0;
+    node.__inDegree = inDeg;
+    node.__outDegree = Math.max(0, totalDeg - inDeg);
+    node.__degree = totalDeg;
+    const degree = node.__inDegree + node.__outDegree;
+    const baseR = node.__depth === 0 ? 5.5 : Math.max(2.8, Math.min(6.5, 2.8 + Math.sqrt(degree) * 1.1));
+    node.__size = baseR;
+  });
+}
+
+function updateLineageTracing(focus) {
+  lineageNodeIds.clear();
+  lineageLinkSet.clear();
+  if (!focus) return;
+
+  const focusId = typeof focus === 'object' ? focus.id : focus;
+  lineageNodeIds.add(focusId);
+
+  // Recursively collect all ancestor prerequisite nodes and links
+  const queue = [focusId];
+  const visited = new Set([focusId]);
+
+  while (queue.length > 0) {
+    const currId = queue.shift();
+    const inPrereqs = incomingPrereqMap.get(currId) || [];
+    inPrereqs.forEach(({ sourceId, link }) => {
+      lineageNodeIds.add(sourceId);
+      lineageLinkSet.add(link);
+      if (!visited.has(sourceId)) {
+        visited.add(sourceId);
+        queue.push(sourceId);
+      }
+    });
+  }
+}
+
+function isLineageLink(link) {
+  if (lineageLinkSet.has(link)) return true;
+  const srcId = (typeof link.source === 'object' && link.source !== null) ? link.source.id : link.source;
+  const tgtId = (typeof link.target === 'object' && link.target !== null) ? link.target.id : link.target;
+  return lineageNodeIds.has(srcId) && lineageNodeIds.has(tgtId);
 }
 
 function isFocusLink(focus, link) {
   if (!focus) return false;
+  if (isLineageLink(link)) return true;
   const fLinks = linksMap.get(focus.id);
   if (fLinks && fLinks.has(link)) return true;
   const srcId = (typeof link.source === 'object' && link.source !== null) ? link.source.id : link.source;
@@ -2121,225 +2529,249 @@ function navigateToGraphNode(targetSlug) {
   }
 }
 
+// Dynamic topic constellation islands
+const topicCentersMap = new Map();
+
+function computeTopicClusterCenters(nodes) {
+  topicCentersMap.clear();
+  const topicsSet = new Set();
+  (nodes || []).forEach(n => {
+    const ts = n.topics || [];
+    if (Array.isArray(ts)) {
+      ts.forEach(t => { if (t) topicsSet.add(t); });
+    } else if (typeof ts === 'string' && ts) {
+      topicsSet.add(ts);
+    }
+  });
+
+  const topicsList = Array.from(topicsSet);
+  const nTopics = topicsList.length;
+  if (nTopics === 0) return;
+
+  if (nTopics === 1) {
+    topicCentersMap.set(topicsList[0], { x: 0, y: 0 });
+  } else if (nTopics === 2) {
+    topicCentersMap.set(topicsList[0], { x: -340, y: 0 });
+    topicCentersMap.set(topicsList[1], { x: 340, y: 0 });
+  } else {
+    topicsList.forEach((topic, idx) => {
+      const x = (idx - (nTopics - 1) / 2) * 640;
+      topicCentersMap.set(topic, { x, y: 0 });
+    });
+  }
+}
+
+function getTopicCenterX(node) {
+  if (!node) return 0;
+  const ts = node.topics || [];
+  const primaryTopic = Array.isArray(ts) ? ts[0] : ts;
+  if (primaryTopic && topicCentersMap.has(primaryTopic)) {
+    return topicCentersMap.get(primaryTopic).x;
+  }
+  return 0;
+}
+
+function getTopicCenterY(node) {
+  if (!node) return 0;
+  const ts = node.topics || [];
+  const primaryTopic = Array.isArray(ts) ? ts[0] : ts;
+  if (primaryTopic && topicCentersMap.has(primaryTopic)) {
+    return topicCentersMap.get(primaryTopic).y;
+  }
+  return 0;
+}
+
+const topicHueMap = new Map();
+
 function initForceGraph() {
   const container = document.getElementById('graph-viewport');
   if (!container || typeof ForceGraph === 'undefined') return;
 
   knowledgeGraphInstance = ForceGraph()(container)
-    .backgroundColor('#0b0c10')
+    .backgroundColor('#09090b')
     .width(container.clientWidth || window.innerWidth)
     .height(container.clientHeight || (window.innerHeight - 56))
     .autoPauseRedraw(false)
-    .cooldownTicks(120)
-    .warmupTicks(40)
-    .d3VelocityDecay(0.3)
+    .cooldownTicks(90)
+    .warmupTicks(60)
+    .d3VelocityDecay(0.36)
     .enableZoomInteraction(true)
     .enablePanInteraction(true)
     .minZoom(0.1)
     .maxZoom(10)
-    .linkCurvature(0.12)
+    .linkCurvature(0)
     .linkDirectionalParticles(link => {
       const focus = hoverNode || selectedNode;
-      return (focus && isFocusLink(focus, link)) ? 2 : 0;
+      if (!focus) return 0;
+      if (isLineageLink(link)) return 3;
+      return isFocusLink(focus, link) ? 2 : 0;
     })
     .linkDirectionalParticleWidth(link => {
       const focus = hoverNode || selectedNode;
-      return (focus && isFocusLink(focus, link)) ? 2 : 0;
+      if (!focus) return 0;
+      if (isLineageLink(link)) return 2.2;
+      return isFocusLink(focus, link) ? 1.8 : 0;
     })
-    .linkDirectionalParticleSpeed(0.005)
+    .linkDirectionalParticleSpeed(0.006)
     .linkDirectionalParticleColor(() => '#38bdf8')
-    .linkDirectionalArrowLength(link => {
-      const focus = hoverNode || selectedNode;
-      if (focus) {
-        return isFocusLink(focus, link) ? 4 : 2;
-      }
-      return 3;
-    })
-    .linkDirectionalArrowRelPos(1)
-    .linkDirectionalArrowColor(link => {
-      const focus = hoverNode || selectedNode;
-      if (focus) {
-        return isFocusLink(focus, link) ? 'rgba(56, 189, 248, 0.8)' : 'rgba(148, 163, 184, 0.05)';
-      }
-      return 'rgba(148, 163, 184, 0.15)';
-    })
+    .linkDirectionalArrowLength(0)
+    .linkWidth(link => (hoverNode || selectedNode) && isLineageLink(link) ? 1.4 : 0.7)
     .linkColor(link => {
-      try {
-        const focus = hoverNode || selectedNode;
-        if (focus) {
-          return isFocusLink(focus, link) ? 'rgba(56, 189, 248, 0.7)' : 'rgba(148, 163, 184, 0.05)';
-        }
-        if (searchQuery) {
-          const srcMatch = matchesSearch(link.source);
-          const tgtMatch = matchesSearch(link.target);
-          return (srcMatch && tgtMatch) ? 'rgba(56, 189, 248, 0.7)' : 'rgba(148, 163, 184, 0.05)';
-        }
-      } catch (err) {
-        console.error('Error in linkColor:', err);
+      const focus = hoverNode || selectedNode;
+      if (focus) {
+        if (isLineageLink(link)) return '#38bdf8';
+        if (isFocusLink(focus, link)) return 'rgba(56, 189, 248, 0.6)';
+        return 'rgba(255, 255, 255, 0.03)';
       }
-      return 'rgba(148, 163, 184, 0.15)';
-    })
-    .linkWidth(link => {
-      try {
-        const focus = hoverNode || selectedNode;
-        if (focus) {
-          return isFocusLink(focus, link) ? 1.5 : 0.8;
-        }
-        if (searchQuery) {
-          const srcMatch = matchesSearch(link.source);
-          const tgtMatch = matchesSearch(link.target);
-          return (srcMatch && tgtMatch) ? 1.5 : 0.8;
-        }
-      } catch (err) {
-        console.error('Error in linkWidth:', err);
-      }
-      return 1;
+      return 'rgba(148, 163, 184, 0.14)';
     })
     .nodeCanvasObject((node, ctx, globalScale) => {
+      if (!Number.isFinite(node.x) || !Number.isFinite(node.y)) return;
       try {
         const focus = hoverNode || selectedNode;
         const isHovered = Boolean(hoverNode && (node === hoverNode || node.id === hoverNode.id));
         const isSelected = Boolean(selectedNode && (node === selectedNode || node.id === selectedNode.id));
+        const isLineage = Boolean(focus && lineageNodeIds.has(node.id));
         const isNeighbor = Boolean(focus && neighborsMap.get(focus.id)?.has(node.id));
-        const isConnected = isHovered || isSelected || isNeighbor;
+        const isConnected = isHovered || isSelected || isLineage || isNeighbor;
 
         node.__hovered = isHovered;
         node.__highlighted = isConnected;
 
-        // Dynamic degree and scaled radius: Math.max(3.5, Math.min(12, 3 + Math.sqrt(degree) * 2))
-        const degree = typeof node.__degree === 'number' ? node.__degree : 0;
-        const r = node.__size || Math.max(3.5, Math.min(12, 3 + Math.sqrt(degree) * 2));
+        const degree = (node.__inDegree || 0) + (node.__outDegree || 0);
+        const baseR = node.__depth === 0 ? 5.2 : Math.max(2.8, Math.min(6.2, 2.8 + Math.sqrt(degree) * 1.05));
+        node.__size = baseR;
 
-        // Hover dimming: full opacity (1.0) for connected/focus, 0.2 for non-connected
-        let alpha = 1.0;
-        if (focus) {
-          alpha = isConnected ? 1.0 : 0.2;
-        } else if (searchQuery) {
-          alpha = matchesSearch(node) ? 1.0 : 0.2;
+        const primaryTopic = (node.topics && node.topics[0]) || '';
+        const hue = topicHueMap.get(primaryTopic) ?? 210;
+        const isMastered = node.status === 'mastered';
+        const isActive = node.status === 'active' || (window.activeConceptId === node.id);
+        const isFocus = focus && (node === focus || lineageNodeIds.has(node.id));
+
+        let coreColor;
+        let glowColor = 'transparent';
+        let blur = 0;
+
+        if (isActive) {
+          // Active lesson: electric sky blue beacon
+          coreColor = '#38bdf8';
+          glowColor = 'rgba(56, 189, 248, 0.45)';
+          blur = 14 / globalScale;
+        } else if (isMastered) {
+          // Mastered: Vibrant topic-colored neon star with luminous bloom
+          coreColor = `hsl(${hue}, 85%, 62%)`;
+          glowColor = `hsla(${hue}, 85%, 62%, 0.38)`;
+          blur = 10 / globalScale;
+        } else {
+          // Planned: Subdued ambient topic dust (readable cluster, but unlit)
+          coreColor = `hsl(${hue}, 28%, 38%)`;
+          blur = 0;
         }
+
+        if (isFocus) {
+          coreColor = '#ffffff';
+          glowColor = 'rgba(255, 255, 255, 0.5)';
+          blur = 8 / globalScale;
+        }
+
+        // Alpha dimming when another node is hovered/focused
+        const nodeAlpha = (focus && !isFocus) ? 0.18 : 1.0;
 
         ctx.save();
-        ctx.globalAlpha = alpha;
+        ctx.globalAlpha = nodeAlpha;
 
-        const status = (node.status || 'planned').toLowerCase();
-        const isActiveNode = status === 'active' || (cachedState && cachedState.current_node && (node.id === cachedState.current_node || node.id === cachedState.current_node_id));
-
-        // Status color coding: Mastered: #22c55e (Emerald), Active: #38bdf8 (Sky), Planned: #64748b (Slate)
-        let nodeFill = '#64748b';
-        let strokeColor = 'rgba(148, 163, 184, 0.4)';
-        if (status === 'mastered') {
-          nodeFill = '#22c55e';
-          strokeColor = 'rgba(134, 239, 172, 0.6)';
-        } else if (status === 'active' || isActiveNode) {
-          nodeFill = '#38bdf8';
-          strokeColor = 'rgba(186, 230, 253, 0.8)';
-        }
-
-        // Active lesson node outer glow ring
-        if (status === 'active' || isActiveNode) {
-          ctx.save();
+        // Pass 1: Outer soft ambient aura for mastered / active nodes
+        if (blur > 0) {
           ctx.beginPath();
-          ctx.arc(node.x, node.y, r + 4, 0, 2 * Math.PI, false);
-          ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
-          ctx.lineWidth = 1.5 / globalScale;
-          ctx.shadowColor = '#38bdf8';
-          ctx.shadowBlur = 8;
-          ctx.stroke();
-          ctx.restore();
+          ctx.arc(node.x, node.y, baseR + (node.__depth === 0 ? 3.5 : 2.5) / globalScale, 0, 2 * Math.PI);
+          ctx.fillStyle = glowColor;
+          ctx.fill();
         }
 
-        // Clean circular core node with subtle 1px stroke
+        // Pass 2: Solid core with canvas bloom
         ctx.beginPath();
-        ctx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
-        ctx.fillStyle = nodeFill;
+        ctx.arc(node.x, node.y, baseR, 0, 2 * Math.PI);
+        ctx.fillStyle = coreColor;
+        if (blur > 0) {
+          ctx.shadowColor = coreColor;
+          ctx.shadowBlur = blur;
+        }
         ctx.fill();
-        ctx.strokeStyle = strokeColor;
-        ctx.lineWidth = 1 / globalScale;
-        ctx.stroke();
+        ctx.restore();
 
-        // Level of Detail (LOD) & Pill Labels
-        const k = globalScale;
-        const shouldDrawLabel = (k >= 0.75 || Boolean(node.__hovered || node.__highlighted)) || Boolean(searchQuery && matchesSearch(node));
+        // Level of Detail: Show label text for active, focused, search match, or zoomed in (globalScale >= 2.0)
+        const shouldDrawLabel = (focus && isFocus) || (isActive && !focus) || (globalScale >= 2.0) || Boolean(searchQuery && matchesSearch(node));
 
         if (shouldDrawLabel) {
-          // Semantic Detail Un-truncation (LOD) with Hysteresis
-          const fullLabel = String(node.label || node.id || '');
-          if (k > 1.35) {
-            node.__isExpanded = true;
-          } else if (k < 1.15) {
-            node.__isExpanded = false;
-          } else if (node.__isExpanded === undefined) {
-            node.__isExpanded = false;
+          const label = String(node.label || node.id || '');
+          if (label) {
+            const fontSize = 10 / globalScale;
+            ctx.save();
+            ctx.globalAlpha = nodeAlpha;
+            ctx.font = `${fontSize}px ui-monospace, SFMono-Regular, monospace`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+
+            const textY = node.y + baseR + (3 / globalScale);
+            const textColor = (isHovered || isSelected) ? '#f4f4f5' : (isFocus ? '#38bdf8' : (isActive ? '#38bdf8' : '#a1a1aa'));
+
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.95)';
+            ctx.shadowBlur = 3 / globalScale;
+            ctx.fillStyle = textColor;
+            ctx.fillText(label, node.x, textY);
+            ctx.restore();
           }
-
-          let label = fullLabel;
-          if (!node.__isExpanded && fullLabel.length > 18) {
-            label = fullLabel.slice(0, 18) + '...';
-          }
-
-          // Screen-Space Font Normalization: constant visual 11px font size without dividing or scaling by k
-          const fontSize = 11;
-          ctx.font = '11px monospace';
-          const textMetrics = ctx.measureText(label);
-          const textWidth = textMetrics.width;
-
-          // Pill padding (3px 8px) and border radius (4px)
-          const pillPaddingX = 8;
-          const pillPaddingY = 3;
-          const pillW = textWidth + pillPaddingX * 2;
-          const pillH = fontSize + pillPaddingY * 2;
-          const cornerRadius = Math.min(4, pillH / 2, pillW / 2);
-
-          // Label Positioning: centered beneath node circle, offset tightly from perimeter
-          const pillOffset = 4;
-          const pillX = node.x - pillW / 2;
-          const pillY = node.y + r + pillOffset;
-
-          // Rounded dark pill background (fill: rgba(15, 23, 42, 0.85), border: rgba(51, 65, 85, 0.6))
-          ctx.beginPath();
-          if (ctx.roundRect) {
-            ctx.roundRect(pillX, pillY, pillW, pillH, cornerRadius);
-          } else {
-            ctx.moveTo(pillX + cornerRadius, pillY);
-            ctx.lineTo(pillX + pillW - cornerRadius, pillY);
-            ctx.quadraticCurveTo(pillX + pillW, pillY, pillX + pillW, pillY + cornerRadius);
-            ctx.lineTo(pillX + pillW, pillY + pillH - cornerRadius);
-            ctx.quadraticCurveTo(pillX + pillW, pillY + pillH, pillX + pillW - cornerRadius, pillY + pillH);
-            ctx.lineTo(pillX + cornerRadius, pillY + pillH);
-            ctx.quadraticCurveTo(pillX, pillY + pillH, pillX, pillY + pillH - cornerRadius);
-            ctx.lineTo(pillX, pillY + cornerRadius);
-            ctx.quadraticCurveTo(pillX, pillY, pillX + cornerRadius, pillY);
-            ctx.closePath();
-          }
-          ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
-          ctx.fill();
-          ctx.strokeStyle = 'rgba(51, 65, 85, 0.6)';
-          ctx.lineWidth = 1;
-          ctx.stroke();
-
-          // Monospace text centered in pill
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillStyle = '#e2e8f0';
-          ctx.fillText(label, node.x, pillY + pillH / 2);
         }
-
-        ctx.restore();
       } catch (err) {
         console.error('Error in nodeCanvasObject:', err);
       }
     })
     .nodePointerAreaPaint((node, color, ctx) => {
-      const r = (node.__size || 6) + 4;
+      const r = (node.__size || 4) + 6;
       ctx.fillStyle = color;
       ctx.beginPath();
       ctx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
       ctx.fill();
     })
+    .onRenderFramePost((ctx, globalScale) => {
+      try {
+        if (globalScale < 0.32) return;
+        const headerAlpha = Math.min(0.65, Math.max(0.0, (globalScale - 0.32) * 2.5));
+
+        const graphData = knowledgeGraphInstance ? knowledgeGraphInstance.graphData() : graphDataCache;
+        if (!graphData) return;
+
+        const topicClusters = new Map();
+        (graphData.nodes || []).forEach(node => {
+          const topic = (node.topics && node.topics[0]) || '';
+          if (!topic || Number.isNaN(node.x) || Number.isNaN(node.y)) return;
+          if (!topicClusters.has(topic)) topicClusters.set(topic, []);
+          topicClusters.get(topic).push(node);
+        });
+
+        topicClusters.forEach((clusterNodes, topic) => {
+          if (!clusterNodes.length) return;
+          const avgX = clusterNodes.reduce((acc, n) => acc + n.x, 0) / clusterNodes.length;
+          const minY = Math.min(...clusterNodes.map(n => n.y));
+
+          ctx.save();
+          const fontSize = Math.max(12, Math.min(22, 15 / globalScale));
+          ctx.font = `600 ${fontSize}px "JetBrains Mono", monospace`;
+          ctx.fillStyle = `rgba(148, 163, 184, ${headerAlpha})`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'bottom';
+          ctx.fillText(`// ${topic.toUpperCase()}`, avgX, minY - (26 / globalScale));
+          ctx.restore();
+        });
+      } catch (err) {
+        console.error('Error rendering topic headers:', err);
+      }
+    })
     .onNodeHover(node => {
       try {
         const container = document.getElementById('graph-viewport');
         hoverNode = node || null;
+        updateLineageTracing(hoverNode || selectedNode);
         if (container) {
           container.style.cursor = node ? 'pointer' : 'default';
         }
@@ -2352,10 +2784,12 @@ function initForceGraph() {
         if (!node) return;
         if (selectedNode === node || (selectedNode && selectedNode.id === node.id)) {
           selectedNode = null;
+          updateLineageTracing(hoverNode);
           closeNoteDrawer();
         } else {
           selectedNode = node;
           hoverNode = null;
+          updateLineageTracing(selectedNode);
           if (knowledgeGraphInstance) {
             knowledgeGraphInstance.centerAt(node.x, node.y, 450);
             knowledgeGraphInstance.zoom(2.0, 450);
@@ -2370,32 +2804,58 @@ function initForceGraph() {
       try {
         selectedNode = null;
         hoverNode = null;
+        updateLineageTracing(null);
         closeNoteDrawer();
       } catch (err) {
         console.error('Error in onBackgroundClick:', err);
       }
     })
     .onNodeDrag((node, translate) => {
-      // Physics Reheating: tug and flex connected nodes when dragged
+      // Intentionally do NOT call d3ReheatSimulation() on continuous drag to prevent velocity explosion / NaN crash
+    })
+    .onNodeDragEnd(node => {
       if (knowledgeGraphInstance) {
-        knowledgeGraphInstance.d3ReheatSimulation();
+        knowledgeGraphInstance.d3AlphaTarget(0);
       }
     });
 
+  // Obsidian D3 Physics Simulation Tuning (Fan-out Sector Physics)
   if (typeof d3 !== 'undefined') {
     knowledgeGraphInstance
-      .d3Force('charge', d3.forceManyBody().strength(-400))
-      .d3Force('collide', d3.forceCollide().radius(node => (node.__size || 6) + 24))
-      .d3Force('center', d3.forceCenter().strength(0.05));
+      .cooldownTicks(90)
+      .warmupTicks(60)
+      .d3VelocityDecay(0.36)
+      .d3Force('charge', d3.forceManyBody().strength(-280).distanceMax(550))
+      .d3Force('collide', d3.forceCollide().radius(d => (d.__size || 4) + 20).iterations(3))
+      .d3Force('radial', null)
+      .d3Force('topicRayX', d3.forceX(d => {
+        const t = (d.topics && d.topics[0]) || '';
+        const ang = topicAngleMap.get(t) ?? 0;
+        const r = coreRadius + (d.__depth || 0) * depthSpacing;
+        return r * Math.cos(ang);
+      }).strength(0.08))
+      .d3Force('topicRayY', d3.forceY(d => {
+        const t = (d.topics && d.topics[0]) || '';
+        const ang = topicAngleMap.get(t) ?? 0;
+        const r = coreRadius + (d.__depth || 0) * depthSpacing;
+        return r * Math.sin(ang);
+      }).strength(0.06));
+
     if (knowledgeGraphInstance.d3Force('link')) {
-      knowledgeGraphInstance.d3Force('link').distance(90);
+      knowledgeGraphInstance.d3Force('link')
+        .distance(link => {
+          const d1 = (link.source && link.source.__depth) || 0;
+          const d2 = (link.target && link.target.__depth) || 0;
+          return 50 + Math.abs(d1 - d2) * 18;
+        })
+        .strength(0.35);
     }
   } else {
     if (knowledgeGraphInstance.d3Force('charge')) {
-      knowledgeGraphInstance.d3Force('charge').strength(-400);
+      knowledgeGraphInstance.d3Force('charge').strength(-280);
     }
     if (knowledgeGraphInstance.d3Force('link')) {
-      knowledgeGraphInstance.d3Force('link').distance(90);
+      knowledgeGraphInstance.d3Force('link').distance(50);
     }
   }
 
@@ -2443,8 +2903,56 @@ async function openGraphModal() {
         relation: e.relation || 'prerequisite'
       }));
 
+      computeTopicClusterCenters(nodes);
       graphDataCache = { nodes, links };
       rebuildAdjacencyMaps(nodes, links);
+
+      // Topic Baseline Separation Across Open Central Void
+      const topicsList = Array.from(new Set(nodes.flatMap(n => n.topics || []).filter(Boolean)));
+      const nTopics = Math.max(1, topicsList.length);
+      // Expand central void dynamically as topics grow so baselines never crowd
+      coreRadius = Math.max(140, 48 * Math.sqrt(nTopics));
+      depthSpacing = Math.max(50, 75 - Math.min(25, nTopics * 0.4));
+
+      topicAngleMap.clear();
+      topicCentersMap.clear();
+      topicsList.forEach((t, i) => {
+        const ang = (2 * Math.PI * i) / nTopics + Math.PI;
+        topicAngleMap.set(t, ang);
+        topicCentersMap.set(t, { x: coreRadius * Math.cos(ang), y: coreRadius * Math.sin(ang) });
+      });
+
+      // Build topicHueMap once inside openGraphModal() based on topicsList:
+      topicHueMap.clear();
+      topicsList.forEach((topic, idx) => {
+        // 137.508 degrees is the golden angle; guarantees maximum hue separation
+        const hue = (idx * 137.508 + 210) % 360;
+        topicHueMap.set(topic, hue);
+      });
+
+      if (knowledgeGraphInstance) {
+        knowledgeGraphInstance.d3Force('radial', null);
+      }
+
+      // Pre-position nodes so topic baselines are spaced across a central void:
+      nodes.forEach(node => {
+        delete node.fx;
+        delete node.fy;
+        const depth = node.__depth || 0;
+        const primaryTopic = (node.topics && node.topics[0]) || '';
+        const angle = topicAngleMap.get(primaryTopic) ?? 0;
+        const radius = coreRadius + depth * depthSpacing;
+        const spread = (Math.random() - 0.5) * (Math.PI / nTopics) * 0.5;
+        node.x = radius * Math.cos(angle + spread);
+        node.y = radius * Math.sin(angle + spread);
+      });
+
+      nodes.forEach(node => {
+        if (typeof node.x !== 'number' || isNaN(node.x)) {
+          node.x = 0;
+          node.y = 0;
+        }
+      });
 
       const countEl = document.getElementById('graph-node-count');
       if (countEl) {
@@ -2454,14 +2962,12 @@ async function openGraphModal() {
       if (knowledgeGraphInstance) {
         knowledgeGraphInstance.graphData(graphDataCache);
         knowledgeGraphInstance.resumeAnimation();
-
-        // Auto-framing: 120ms timeout ensures D3 warmup ticks and layout have settled before framing
         setTimeout(() => {
           if (knowledgeGraphInstance && container) {
             knowledgeGraphInstance.width(container.clientWidth || w).height(container.clientHeight || h);
-            knowledgeGraphInstance.zoomToFit(400, 60);
+            knowledgeGraphInstance.zoomToFit(300, 60);
           }
-        }, 120);
+        }, 60);
       }
     }
   } catch (err) {
@@ -2501,20 +3007,21 @@ function graphZoomOut() {
 
 function graphFitView() {
   if (!knowledgeGraphInstance) return;
-  knowledgeGraphInstance.zoomToFit(400, 60);
+  knowledgeGraphInstance.zoomToFit(400, 50);
 }
 
 function graphResetView() {
   if (!knowledgeGraphInstance) return;
   selectedNode = null;
   hoverNode = null;
+  updateLineageTracing(null);
   closeNoteDrawer();
   const searchInput = document.getElementById('graph-search');
   if (searchInput) {
     searchInput.value = '';
     searchQuery = '';
   }
-  knowledgeGraphInstance.zoomToFit(400, 60);
+  knowledgeGraphInstance.zoomToFit(400, 50);
   knowledgeGraphInstance.d3ReheatSimulation();
 }
 

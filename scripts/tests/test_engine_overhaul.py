@@ -35,6 +35,7 @@ def test_batch_grading():
 
     # Initialize a 3-question quiz in state/quiz.json
     quiz_data = {
+        "_shuffled": True,
         "questions": [
             {
                 "question": "What is the primary role of an Order Qualifier?",
