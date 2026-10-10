@@ -2156,7 +2156,7 @@ function closeSavedTopicsModal() {
 window.openSavedTopicsModal = openSavedTopicsModal;
 window.closeSavedTopicsModal = closeSavedTopicsModal;
 
-async function deleteSavedTopic(topicName) {
+async function deleteTopic(topicName) {
   const confirmed = confirm(`Are you absolutely sure you want to delete topic vault "${topicName}"?\n\nThis will permanently delete the vault directory and notes.`);
   if (!confirmed) return;
   const doubleConfirmed = confirm(`Please confirm a second time: Permanently delete "${topicName}"? This cannot be undone.`);
@@ -2166,7 +2166,14 @@ async function deleteSavedTopic(topicName) {
     const res = await fetch(`/api/topics/${encodeURIComponent(topicName)}`, {
       method: 'DELETE'
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      let errMsg = `HTTP ${res.status}`;
+      try {
+        const data = await res.json();
+        if (data && data.detail) errMsg = data.detail;
+      } catch (_) {}
+      throw new Error(errMsg);
+    }
     showToast(`Deleted topic "${topicName}" successfully.`);
     await loadSavedTopics();
     await pollState();
@@ -2175,6 +2182,8 @@ async function deleteSavedTopic(topicName) {
   }
 }
 
+const deleteSavedTopic = deleteTopic;
+window.deleteTopic = deleteTopic;
 window.deleteSavedTopic = deleteSavedTopic;
 
 // Saved Topics Menu Management & Robust Discovery

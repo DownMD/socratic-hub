@@ -11,6 +11,8 @@ Tests:
 
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import unittest
@@ -22,12 +24,13 @@ ACTIVE_SESSION_FILE = STATE_DIR / "active_session.json"
 CACHE_DIR = STATE_DIR / "cache"
 
 sys.path.insert(0, str(WORKSPACE_ROOT))
+import server
 from server import app, submit_batch_quiz, BatchQuizSubmitRequest
 
 
 def test_batch_grading():
     print("[TEST 1/4] Testing Batch Quiz Submission & Instant Grading in Python...")
-    topic_name = "Test Batch Topic"
+    topic_name = "test_batch_fixture"
     topic_dir = WORKSPACE_ROOT / "notes" / topic_name
     sess_dir = topic_dir / ".session"
     sess_dir.mkdir(parents=True, exist_ok=True)
@@ -39,7 +42,7 @@ def test_batch_grading():
     with open(ACTIVE_SESSION_FILE, "w", encoding="utf-8") as f:
         json.dump({"active_topic": topic_name, "phase": "teaching"}, f, indent=2)
 
-    # Initialize a 3-question quiz in notes/Test Batch Topic/.session/quiz.json
+    # Initialize a 3-question quiz in notes/test_batch_fixture/.session/quiz.json
     quiz_data = {
         "_shuffled": True,
         "questions": [
@@ -80,7 +83,7 @@ def test_batch_grading():
         assert eval_res.get("passed") is True, "Expected passed: True"
         assert eval_res.get("score") == 1.0, "Expected score: 1.0"
 
-        # Verify atomic write to notes/Test Batch Topic/.session/answer.json
+        # Verify atomic write to notes/test_batch_fixture/.session/answer.json
         assert answer_file.exists(), "Expected topic .session/answer.json to exist"
         with open(answer_file, "r", encoding="utf-8") as f:
             disk_answer = json.load(f)
@@ -89,13 +92,12 @@ def test_batch_grading():
 
         print("[PASS] Batch quiz grading and atomic answer writing verified successfully.")
     finally:
-        import shutil
         shutil.rmtree(topic_dir, ignore_errors=True)
 
 
 def test_advance_node():
     print("[TEST 2/4] Testing Programmatic Node Advancement via bridge.py advance-node...")
-    topic_name = "Test Advance Topic"
+    topic_name = "test_advance_fixture"
     topic_dir = WORKSPACE_ROOT / "notes" / topic_name
     sess_dir = topic_dir / ".session"
     sess_dir.mkdir(parents=True, exist_ok=True)
@@ -108,19 +110,19 @@ def test_advance_node():
         "domain": "operations",
         "nodes": [
             {
-                "id": "node-1-outputs",
+                "id": "test-node-outputs",
                 "title": "Manufacturing Outputs & Competitive Dimensions",
                 "status": "active",
                 "origin": "curriculum"
             },
             {
-                "id": "node-2-levers",
+                "id": "test-node-levers",
                 "title": "Manufacturing Decision Levers: Structural vs Infrastructural",
                 "status": "planned",
                 "origin": "curriculum"
             },
             {
-                "id": "node-3-frontier",
+                "id": "test-node-frontier",
                 "title": "Manufacturing Capability Frontier & Sandcone Model",
                 "status": "planned",
                 "origin": "curriculum"
@@ -132,9 +134,9 @@ def test_advance_node():
         json.dump(test_manifest, f, indent=2)
 
     # Create note 1 in vault
-    note1_file = topic_dir / "node-1-outputs.md"
+    note1_file = topic_dir / "test-node-outputs.md"
     note1_file.write_text(
-        "---\nid: node-1-outputs\ntitle: Manufacturing Outputs & Competitive Dimensions\nstatus: in_progress\n---\n\n# Node 1",
+        "---\nid: test-node-outputs\ntitle: Manufacturing Outputs & Competitive Dimensions\nstatus: in_progress\n---\n\n# Node 1",
         encoding="utf-8"
     )
 
@@ -143,14 +145,14 @@ def test_advance_node():
     with open(ACTIVE_SESSION_FILE, "w", encoding="utf-8") as f:
         json.dump({
             "active_topic": topic_name,
-            "active_node_id": "node-1-outputs",
+            "active_node_id": "test-node-outputs",
             "phase": "teaching"
         }, f, indent=2)
 
     # Setup passing answer
     with open(answer_file, "w", encoding="utf-8") as f:
         json.dump({
-            "node_id": "node-1-outputs",
+            "node_id": "test-node-outputs",
             "batch": True,
             "passed": True,
             "score": 1.0,
@@ -175,7 +177,7 @@ def test_advance_node():
         # 2. Validate active_session.json active_node_id
         with open(ACTIVE_SESSION_FILE, "r", encoding="utf-8") as f:
             updated_sess = json.load(f)
-        assert updated_sess.get("active_node_id") == "node-2-levers", f"Expected active_node_id node-2-levers, got {updated_sess.get('active_node_id')}"
+        assert updated_sess.get("active_node_id") == "test-node-levers", f"Expected active_node_id test-node-levers, got {updated_sess.get('active_node_id')}"
 
         # 3. Validate note frontmatter was promoted
         note1_content = note1_file.read_text(encoding="utf-8")
@@ -186,7 +188,6 @@ def test_advance_node():
 
         print("[PASS] Programmatic advance-node, manifest update, frontmatter promotion, and buffer cleanup verified.")
     finally:
-        import shutil
         shutil.rmtree(topic_dir, ignore_errors=True)
 
 
@@ -216,7 +217,7 @@ def test_resume_protocol_agents_md():
 
 
 def test_clean_reset_state():
-    print("[TEST 4/4] Performing Clean State Reset for Manufacturing Strategy...")
+    print("[TEST 4/4] Performing Clean State Reset for test_manufacturing_fixture...")
     # Clear quiz and answer
     if QUIZ_FILE.exists():
         QUIZ_FILE.unlink()
@@ -231,7 +232,7 @@ def test_clean_reset_state():
 
     # Reset topic.json
     topic_data = {
-        "topic": "Manufacturing Strategy",
+        "topic": "test_manufacturing_fixture",
         "active_node_id": None,
         "phase": "IDLE"
     }
@@ -252,14 +253,35 @@ def test_clean_reset_state():
     assert len(list(CACHE_DIR.glob("*"))) == 0
     with open(TOPIC_FILE, "r", encoding="utf-8") as f:
         t = json.load(f)
-    assert t["topic"] == "Manufacturing Strategy"
+    assert t["topic"] == "test_manufacturing_fixture"
     assert t["active_node_id"] is None
     assert t["phase"] == "IDLE"
 
-    print("[PASS] Clean state reset for Manufacturing Strategy verified.")
+    print("[PASS] Clean state reset for test_manufacturing_fixture verified.")
 
 
 class TestEngineOverhaul(unittest.TestCase):
+    def setUp(self):
+        self._cleanup()
+
+    def tearDown(self):
+        self._cleanup()
+
+    def _cleanup(self):
+        for name in [
+            "Test Batch Topic", "test_batch_fixture",
+            "Test Advance Topic", "test_advance_fixture",
+            "Manufacturing Strategy", "test_manufacturing_fixture"
+        ]:
+            d = WORKSPACE_ROOT / "notes" / name
+            if d.exists():
+                shutil.rmtree(d, ignore_errors=True)
+        if (WORKSPACE_ROOT / "notes").exists():
+            for p in (WORKSPACE_ROOT / "notes").iterdir():
+                if p.is_dir() and re.match(r'^(test[-_\s]|\.test)', p.name, re.IGNORECASE):
+                    shutil.rmtree(p, ignore_errors=True)
+        server.reset_state()
+
     def test_batch_grading(self):
         test_batch_grading()
 

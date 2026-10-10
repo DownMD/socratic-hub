@@ -202,6 +202,16 @@ def test_cache_directory_and_protocol() -> bool:
 
 
 class TestStep5(unittest.TestCase):
+    def setUp(self):
+        self._cleanup()
+
+    def tearDown(self):
+        self._cleanup()
+
+    def _cleanup(self):
+        shutil.rmtree(CACHE_DIR / "test-topic", ignore_errors=True)
+        (STATE_DIR / "test_quiz.json").unlink(missing_ok=True)
+
     def test_verifier_tools(self):
         self.assertTrue(test_verifier_tools())
 

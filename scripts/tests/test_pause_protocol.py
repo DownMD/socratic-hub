@@ -15,6 +15,8 @@ Verifies:
 
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import time
@@ -31,6 +33,13 @@ from bridge import PAUSE_FLAG, STATE_DIR, ACTIVE_SESSION_FILE
 def cleanup():
     if PAUSE_FLAG.exists():
         PAUSE_FLAG.unlink(missing_ok=True)
+    test_topic_dir = WORKSPACE_ROOT / "notes" / "test-pause-topic"
+    if test_topic_dir.exists():
+        shutil.rmtree(test_topic_dir, ignore_errors=True)
+    if (WORKSPACE_ROOT / "notes").exists():
+        for p in (WORKSPACE_ROOT / "notes").iterdir():
+            if p.is_dir() and re.match(r'^(test[-_\s]|\.test)', p.name, re.IGNORECASE):
+                shutil.rmtree(p, ignore_errors=True)
 
 
 def test_api_pause():
@@ -166,6 +175,13 @@ def test_ui_and_docs():
 
 
 class TestPauseProtocol(unittest.TestCase):
+    def setUp(self):
+        cleanup()
+
+    def tearDown(self):
+        cleanup()
+        server.reset_state()
+
     def test_api_pause(self):
         self.assertTrue(test_api_pause())
 

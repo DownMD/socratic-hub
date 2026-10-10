@@ -157,8 +157,7 @@
       "label": "Processing Time & Station Capacity",
       "status": "mastered",
       "topics": [
-        "Process Analysis",
-        "Manufacturing Strategy"
+        "Process Analysis"
       ]
     },
     {
@@ -426,12 +425,11 @@
       "badge_label": null
     },
     {
-      "id": "node-1-outputs",
-      "label": "Manufacturing Outputs & Competitive Dimensions",
+      "id": "test-node-outputs",
+      "label": "test-node-outputs",
       "status": "mastered",
       "topics": [
-        "Manufacturing Strategy",
-        "Test Advance Topic"
+        "test_advance_fixture"
       ],
       "origin": null,
       "badge_label": null

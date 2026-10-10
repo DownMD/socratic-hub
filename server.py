@@ -7,6 +7,7 @@ import shutil
 import signal
 import threading
 import time
+import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -166,6 +167,44 @@ def get_topic_notes_dir(topic_name: Optional[str]) -> Optional[Path]:
     if slug.exists():
         return slug
     return canonical
+
+
+def resolve_topic_dir(topic_name: Optional[str]) -> Optional[Path]:
+    """Resolve the topic folder defensively by checking:
+    a) NOTES_DIR / topic_name
+    b) NOTES_DIR / urllib.parse.unquote(topic_name)
+    c) Case-insensitive search across child directories of NOTES_DIR
+    """
+    if not topic_name or not str(topic_name).strip() or str(topic_name).strip().lower() in ("not set", "not-set", "none"):
+        return None
+    raw = str(topic_name).strip()
+    unquoted = urllib.parse.unquote(raw).strip()
+
+    # a) NOTES_DIR / topic_name
+    cand_a = NOTES_DIR / raw
+    if cand_a.exists() and cand_a.is_dir():
+        return cand_a
+
+    # b) NOTES_DIR / urllib.parse.unquote(topic_name)
+    if unquoted:
+        cand_b = NOTES_DIR / unquoted
+        if cand_b.exists() and cand_b.is_dir():
+            return cand_b
+
+    # c) Case-insensitive search across child directories of NOTES_DIR
+    if NOTES_DIR.exists():
+        candidates = {
+            raw.lower(),
+            unquoted.lower(),
+            sanitize_topic(raw).lower(),
+            sanitize_topic(unquoted).lower()
+        }
+        for item in NOTES_DIR.iterdir():
+            if item.is_dir():
+                if item.name.lower() in candidates:
+                    return item
+
+    return None
 
 
 def clean_label(label: str) -> str:
@@ -1418,6 +1457,10 @@ class DiscardTopicRequest(BaseModel):
     topic: str
 
 
+class DeleteTopicRequest(BaseModel):
+    topic: str
+
+
 class GraphSyncRequest(BaseModel):
     nodes: List[Dict[str, Any]] = Field(default_factory=list)
     edges: List[Dict[str, Any]] = Field(default_factory=list)
@@ -2269,6 +2312,8 @@ def get_topics() -> Dict[str, Any]:
         if NOTES_DIR.exists():
             for item in sorted(NOTES_DIR.iterdir()):
                 if item.is_dir() and not item.name.startswith("."):
+                    if re.match(r'^(test[-_\s]|\.test)', item.name, re.IGNORECASE):
+                        continue
                     slug = sanitize_topic(item.name)
                     if slug in ("not-set", "default", ""):
                         continue
@@ -2366,6 +2411,8 @@ def get_topics() -> Dict[str, Any]:
                 t_str = str(t_raw).strip()
                 if not t_str:
                     continue
+                if re.match(r'^(test[-_\s]|\.test)', t_str, re.IGNORECASE):
+                    continue
                 t_slug = sanitize_topic(t_str)
                 if t_slug in ("not-set", "default", ""):
                     continue
@@ -2373,20 +2420,23 @@ def get_topics() -> Dict[str, Any]:
                     kg_topic_nodes[t_slug] = []
                 kg_topic_nodes[t_slug].append(node)
 
-                if t_slug not in topics_by_slug:
-                    topics_by_slug[t_slug] = {
-                        "name": t_str,
-                        "slug": t_slug,
-                        "domain": "General",
-                        "status": "in_progress",
-                        "nodes": [],
-                        "completed_nodes": [],
-                        "current_node": "",
-                        "updated_at": "",
-                        "total_nodes": 0,
-                        "mastered_nodes": 0,
-                        "active_node": "None"
-                    }
+                # Only include as a saved topic if the vault folder actually exists on disk
+                target_dir = resolve_topic_dir(t_str)
+                if target_dir and target_dir.exists() and target_dir.is_dir():
+                    if t_slug not in topics_by_slug:
+                        topics_by_slug[t_slug] = {
+                            "name": t_str,
+                            "slug": t_slug,
+                            "domain": "General",
+                            "status": "in_progress",
+                            "nodes": [],
+                            "completed_nodes": [],
+                            "current_node": "",
+                            "updated_at": "",
+                            "total_nodes": 0,
+                            "mastered_nodes": 0,
+                            "active_node": "None"
+                        }
 
         # 3. Enrich if manifest didn't provide node counts
         for slug, t_data in topics_by_slug.items():
@@ -2421,29 +2471,46 @@ def get_topics() -> Dict[str, Any]:
         return {"topics": []}
 
 
-@app.delete("/api/topics/{topic_name}")
-def delete_topic(topic_name: str) -> Dict[str, Any]:
+def perform_delete_topic(topic_name: str) -> Dict[str, Any]:
     cleaned = topic_name.strip()
     if not cleaned:
         raise HTTPException(status_code=400, detail="Topic name must not be empty.")
 
-    target_dir = get_topic_notes_dir(cleaned)
+    target_dir = resolve_topic_dir(cleaned)
     if not target_dir or not target_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Topic '{cleaned}' not found.")
+        available = [p.name for p in NOTES_DIR.iterdir() if p.is_dir() and not p.name.startswith(".")] if NOTES_DIR.exists() else []
+        raise HTTPException(
+            status_code=404,
+            detail=f"Topic directory for '{topic_name}' not found. Available topics: {available}"
+        )
 
-    # 1. Purge notes/<topic_name>/ directory
+    resolved_name = target_dir.name
+    # 1. Remove the directory tree with shutil.rmtree()
     shutil.rmtree(target_dir, ignore_errors=True)
 
     # 2. Purge from state/knowledge_graph.json
     try:
         kg = load_knowledge_graph()
-        slug = sanitize_topic(cleaned)
+        unquoted = urllib.parse.unquote(cleaned).strip()
+        slugs_to_remove = {
+            sanitize_topic(cleaned).lower(),
+            sanitize_topic(unquoted).lower(),
+            sanitize_topic(resolved_name).lower()
+        }
+        names_to_remove = {
+            cleaned.lower(),
+            unquoted.lower(),
+            resolved_name.lower()
+        }
         modified_nodes = []
         for n in kg.get("nodes", []):
             topics = n.get("topics", [])
             if isinstance(topics, str):
                 topics = [topics]
-            new_topics = [t for t in topics if sanitize_topic(str(t)) != slug and str(t).strip().lower() != cleaned.lower()]
+            new_topics = [
+                t for t in topics
+                if sanitize_topic(str(t)).lower() not in slugs_to_remove and str(t).strip().lower() not in names_to_remove
+            ]
             if new_topics:
                 n["topics"] = new_topics
                 modified_nodes.append(n)
@@ -2460,11 +2527,34 @@ def delete_topic(topic_name: str) -> Dict[str, Any]:
 
     # 3. If currently active, reset session
     active_sess = get_active_session()
-    current_topic = active_sess.get("active_topic", "")
-    if current_topic and (sanitize_topic(current_topic) == sanitize_topic(cleaned) or current_topic.lower() == cleaned.lower()):
-        reset_state()
+    current_topic = str(active_sess.get("active_topic") or "").strip()
+    if current_topic:
+        unquoted = urllib.parse.unquote(cleaned).strip()
+        slugs_to_remove = {
+            sanitize_topic(cleaned).lower(),
+            sanitize_topic(unquoted).lower(),
+            sanitize_topic(resolved_name).lower()
+        }
+        names_to_remove = {
+            cleaned.lower(),
+            unquoted.lower(),
+            resolved_name.lower()
+        }
+        if sanitize_topic(current_topic).lower() in slugs_to_remove or current_topic.lower() in names_to_remove:
+            reset_state()
 
-    return {"status": "ok", "deleted": cleaned}
+    return {"status": "deleted", "topic": topic_name}
+
+
+@app.delete("/api/topics/{topic_name:path}")
+@app.delete("/api/topics/{topic_name}")
+def delete_topic(topic_name: str) -> Dict[str, Any]:
+    return perform_delete_topic(topic_name)
+
+
+@app.post("/api/topics/delete")
+def delete_topic_post(req: DeleteTopicRequest) -> Dict[str, Any]:
+    return perform_delete_topic(req.topic)
 
 
 @app.post("/api/topics/load")
