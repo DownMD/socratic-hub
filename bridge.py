@@ -87,6 +87,17 @@ def save_active_session(sess: Dict[str, Any]) -> None:
     safe_replace(tmp, ACTIVE_SESSION_FILE)
 
 
+def validate_note_frontmatter(content: str) -> bool:
+    """Pre-write sanity check: ensures note markdown strictly begins with valid YAML frontmatter containing an id."""
+    if not content or not isinstance(content, str):
+        return False
+    match = re.match(r'^---\r?\n([\s\S]*?)\r?\n---\r?\n?', content)
+    if not match:
+        return False
+    fm_block = match.group(1)
+    return bool(re.search(r'^id:\s*["\']?[a-zA-Z0-9_\-]+["\']?', fm_block, re.MULTILINE))
+
+
 def promote_vault_note_frontmatter(vault_note_path: Path) -> None:
     """Updates YAML frontmatter atomically to status: 'mastered' and badge_label: 'Curriculum Mastered', appending Mastery Callout if missing."""
     try:
@@ -95,6 +106,8 @@ def promote_vault_note_frontmatter(vault_note_path: Path) -> None:
         if fm_match:
             fm_text = fm_match.group(1)
             body = fm_match.group(2)
+            if not re.search(r'^id:\s*.*$', fm_text, re.MULTILINE):
+                fm_text = f'id: "{vault_note_path.stem}"\n' + fm_text
             if re.search(r'^status:\s*.*$', fm_text, re.MULTILINE):
                 fm_text = re.sub(r'^status:\s*.*$', 'status: "mastered"', fm_text, flags=re.MULTILINE)
             else:
@@ -118,7 +131,11 @@ def promote_vault_note_frontmatter(vault_note_path: Path) -> None:
                 "> [!success] Curriculum Mastery\n"
                 "> Mastered through interactive Socratic instruction and verified via checkpoint quiz.\n\n"
             )
-            new_content = f'---\nstatus: "mastered"\nbadge_label: "Curriculum Mastered"\n---\n\n{callout}{content}'
+            new_content = f'---\nid: "{vault_note_path.stem}"\nstatus: "mastered"\nbadge_label: "Curriculum Mastered"\n---\n\n{callout}{content}'
+
+        # Pre-write sanity check
+        if not validate_note_frontmatter(new_content):
+            raise ValueError(f"Content for {vault_note_path} failed frontmatter sanity validation.")
 
         tmp = vault_note_path.with_name(f"{vault_note_path.name}.tmp")
         tmp.write_text(new_content, encoding="utf-8")
@@ -641,6 +658,8 @@ def archive_completed_node_vault(completed_node: dict, topic_data: dict) -> None
             f"## Concept Overview\n\n{core_mech}\n"
         ])
         final_vault_content = "\n".join(fm_lines)
+        if not validate_note_frontmatter(final_vault_content):
+            raise ValueError(f"Content for {vault_note_path} failed frontmatter sanity validation.")
         tmp_vault = vault_note_path.with_name(f"{vault_note_path.name}.tmp")
         tmp_vault.write_text(final_vault_content, encoding="utf-8")
         safe_replace(tmp_vault, vault_note_path)
@@ -914,6 +933,25 @@ def advance_node() -> None:
         print("[LOOKAHEAD] All horizon targets cached [PASS]")
 
 
+def sync_manifest(topic_name: str) -> Dict[str, Any]:
+    """Automatically rebuilds manifest.json from all existing markdown files in that topic directory."""
+    if not topic_name or not topic_name.strip():
+        print("[MANIFEST] Error: --topic argument is required.", file=sys.stderr)
+        sys.exit(1)
+
+    t_dir = get_topic_notes_dir(topic_name.strip())
+    if not t_dir or not t_dir.exists():
+        print(f"[MANIFEST] Error: Topic directory '{t_dir}' does not exist.", file=sys.stderr)
+        sys.exit(1)
+
+    import server
+    manifest = server.synthesize_manifest_for_topic(t_dir)
+    server.save_topic_manifest(t_dir, manifest)
+    node_count = len(manifest.get("nodes", []))
+    print(f"[MANIFEST] Successfully synchronized manifest.json for topic '{topic_name}' ({node_count} nodes).")
+    return manifest
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Learning Hub Bridge CLI")
     subparsers = parser.add_subparsers(dest="command")
@@ -936,10 +974,21 @@ if __name__ == "__main__":
 
     advance_parser = subparsers.add_parser("advance-node", help="Programmatically advance node transition in Python")
 
+    sync_man_parser = subparsers.add_parser("sync-manifest", help="Automatically rebuild manifest.json from existing markdown files")
+    sync_man_parser.add_argument(
+        "--topic",
+        type=str,
+        required=True,
+        help="Topic name to rebuild manifest for",
+    )
+
     args = parser.parse_args()
 
     if args.command == "advance-node":
         advance_node()
+    elif args.command == "sync-manifest":
+        sync_manifest(args.topic)
+        sys.exit(0)
     elif args.command == "shuffle-quiz":
         path = Path(args.file) if args.file else None
         res = shuffle_quiz_file(path)

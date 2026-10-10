@@ -717,6 +717,17 @@ function renderNotesStandby() {
   `;
 }
 
+// Robust Frontmatter Sanitizer
+function sanitizeNoteContent(rawMarkdown) {
+  if (!rawMarkdown) return '';
+  let cleaned = rawMarkdown.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
+  if (/^(id:\s*[\w-]+[\r\n]+title:)/i.test(cleaned.trim())) {
+    cleaned = cleaned.replace(/^[\s\S]*?\r?\n\r?\n/, '');
+  }
+  return cleaned.trim();
+}
+window.sanitizeNoteContent = sanitizeNoteContent;
+
 // Helper: Render Lesson Markdown + Viewport Separation + KaTeX
 function renderLesson(markdown, activeNodeId = null, activeNodeLabel = null) {
   const container = document.getElementById('lesson-content');
@@ -747,7 +758,8 @@ function renderLesson(markdown, activeNodeId = null, activeNodeLabel = null) {
 
   let renderedHtml = '';
   if (previousMarkdown && previousMarkdown.trim()) {
-    let renderedPrev = window.marked ? window.marked.parse(previousMarkdown) : previousMarkdown;
+    const cleanPrev = sanitizeNoteContent(previousMarkdown);
+    let renderedPrev = window.marked ? window.marked.parse(cleanPrev) : cleanPrev;
     renderedPrev = interceptMermaidBlocks(renderedPrev);
     renderedHtml += `
       <details id="previous-notes-drawer" style="margin-bottom: 1rem; border-bottom: 1px solid #334155; padding-bottom: 0.5rem;">
@@ -764,7 +776,8 @@ function renderLesson(markdown, activeNodeId = null, activeNodeLabel = null) {
     `;
   }
 
-  let renderedActive = window.marked ? window.marked.parse(activeMarkdown) : activeMarkdown;
+  const cleanActive = sanitizeNoteContent(activeMarkdown);
+  let renderedActive = window.marked ? window.marked.parse(cleanActive) : cleanActive;
   renderedActive = interceptMermaidBlocks(renderedActive);
   renderedHtml += `
     <div id="active-lesson-container">${renderedActive}</div>
@@ -806,6 +819,26 @@ function renderLesson(markdown, activeNodeId = null, activeNodeLabel = null) {
 const updateLessonNotes = renderLesson;
 window.renderLesson = renderLesson;
 window.updateLessonNotes = updateLessonNotes;
+
+function renderNoteContent(rawMarkdown, container = null) {
+  const target = container || document.getElementById('lesson-content');
+  if (!target) return;
+  const cleaned = sanitizeNoteContent(rawMarkdown);
+  const processed = preprocessWikilinks(cleaned);
+  let html = (typeof marked !== 'undefined') ? marked.parse(processed) : processed;
+  html = interceptMermaidBlocks(html);
+  html = formatObsidianCallouts(html);
+  target.innerHTML = html;
+  renderMath(target);
+  runMermaidOnNotes(target);
+}
+
+function renderReadingMode(rawMarkdown, container = null) {
+  renderNoteContent(rawMarkdown, container);
+}
+
+window.renderNoteContent = renderNoteContent;
+window.renderReadingMode = renderReadingMode;
 
 // Helper: Render Active Quiz
 function renderQuiz(quizData, latestAnswer) {
@@ -1542,7 +1575,7 @@ async function loadNodeReference(nodeId, nodeLabel) {
     const data = await resp.json();
 
     if (data.found && data.content) {
-      const cleaned = stripFrontmatter(data.content);
+      const cleaned = sanitizeNoteContent(data.content);
       const processed = preprocessWikilinks(cleaned);
       let html = (typeof marked !== 'undefined') ? marked.parse(processed) : processed;
       html = interceptMermaidBlocks(html);
@@ -2685,8 +2718,7 @@ function matchesSearch(nodeOrId) {
 }
 
 function stripFrontmatter(md) {
-  if (!md) return '';
-  return md.replace(/^---[\r\n]+[\s\S]*?[\r\n]+---[\r\n]*/, '').trim();
+  return sanitizeNoteContent(md);
 }
 
 function preprocessWikilinks(md) {
@@ -2800,7 +2832,7 @@ async function openNoteDrawer(node) {
     updateDrawerBadge(origin, status);
 
     if (data.found && data.content) {
-      const cleaned = stripFrontmatter(data.content);
+      const cleaned = sanitizeNoteContent(data.content);
       const processed = preprocessWikilinks(cleaned);
       let html = (typeof marked !== 'undefined') ? marked.parse(processed) : processed;
       html = interceptMermaidBlocks(html);

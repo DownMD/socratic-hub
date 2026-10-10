@@ -309,10 +309,20 @@ def find_matching_node_key(cand_id: str, cand_title: str, nodes_dict: Dict[str, 
 
 
 def parse_frontmatter(content: str) -> Dict[str, Any]:
-    fm_match = re.match(r'^---\s*\r?\n([\s\S]*?)\r?\n---\s*\r?\n', content)
-    if not fm_match:
+    fm_match = re.match(r'^---\s*\r?\n([\s\S]*?)\r?\n---\s*(\r?\n|$)', content)
+    fm_text = ""
+    if fm_match:
+        fm_text = fm_match.group(1)
+    else:
+        hdr_match = re.match(r'^(id:\s*[\w-]+[\r\n]+[\s\S]*?)(?:\r?\n\r?\n|$)', content.strip(), re.IGNORECASE)
+        if hdr_match:
+            fm_text = hdr_match.group(1)
+    if not fm_text:
+        title_match = re.search(r'^#\s+([^\r\n]+)', content, re.MULTILINE)
+        if title_match:
+            return {"title": title_match.group(1).strip()}
         return {}
-    fm_text = fm_match.group(1)
+
     data: Dict[str, Any] = {}
     current_list_key: Optional[str] = None
     for line in fm_text.splitlines():
@@ -335,6 +345,12 @@ def parse_frontmatter(content: str) -> Dict[str, Any]:
                 data[key] = val
         else:
             current_list_key = None
+
+    if "title" not in data:
+        title_match = re.search(r'^#\s+([^\r\n]+)', content, re.MULTILINE)
+        if title_match:
+            data["title"] = title_match.group(1).strip()
+
     return data
 
 
@@ -366,13 +382,16 @@ def get_active_topic_dir() -> Optional[Path]:
 
 
 def load_topic_manifest(topic_name_or_dir: Any) -> Optional[Dict[str, Any]]:
-    """Load canonical manifest.json for a topic, synthesizing if missing."""
+    """Load canonical manifest.json for a topic, synthesizing and reconciling notes on disk."""
     if isinstance(topic_name_or_dir, Path):
         t_dir = topic_name_or_dir
     else:
         t_dir = get_topic_notes_dir(str(topic_name_or_dir))
     if not t_dir or not t_dir.exists():
         return None
+    synth = synthesize_manifest_for_topic(t_dir)
+    if synth and synth.get("nodes"):
+        return synth
     man_file = t_dir / "manifest.json"
     if man_file.exists():
         try:
@@ -381,10 +400,6 @@ def load_topic_manifest(topic_name_or_dir: Any) -> Optional[Dict[str, Any]]:
                 return data
         except Exception:
             pass
-    synth = synthesize_manifest_for_topic(t_dir)
-    if synth and synth.get("nodes"):
-        save_topic_manifest(t_dir, synth)
-        return synth
     return None
 
 
@@ -502,7 +517,9 @@ def compile_mermaid_dag(manifest: Dict[str, Any]) -> str:
             id_to_key[normalize_concept_id(al)] = nkey
         nlbl = str(node.get("title") or node.get("label") or nid).replace('"', "'").strip()
         nst = str(node.get("status", "pending")).lower().strip()
-        if nst not in ("completed", "active", "pending", "mastered"):
+        if nst in ("in_progress", "active"):
+            nst = "active"
+        elif nst not in ("completed", "active", "pending", "mastered"):
             nst = "pending"
         lines.append(f'  {nkey}["{nlbl}"]:::{nst}')
 
@@ -530,12 +547,14 @@ def compile_mermaid_dag(manifest: Dict[str, Any]) -> str:
 
 
 def synthesize_manifest_for_topic(topic_dir: Path) -> Dict[str, Any]:
-    """Synthesize manifest.json from existing topic notes, session.json, curriculum.json, and roadmap.mmd."""
+    """Synthesize and auto-reconcile manifest.json from existing manifest, topic notes,
+    state/knowledge_graph.json, session.json, curriculum.json, and roadmap.mmd."""
     topic_name = topic_dir.name.replace("-", " ").title()
     domain = "general"
     ref_scope = {"collection": "general", "tags": []}
     nodes_dict: Dict[str, Dict[str, Any]] = {}
     alias_map: Dict[str, str] = {}
+    initial_node_ids = set()
 
     def add_or_merge_node(
         cand_id: str,
@@ -569,8 +588,10 @@ def synthesize_manifest_for_topic(topic_dir: Path) -> Dict[str, Any]:
                 existing["status"] = "mastered"
                 existing["badge_label"] = "Curriculum Mastered"
             elif cand_st in ("active", "in_progress") and ex_st not in ("mastered", "completed"):
-                existing["status"] = "active"
+                existing["status"] = cand_status or "active"
                 existing["badge_label"] = "In Progress"
+            elif cand_st in ("planned", "pending") and not existing.get("status"):
+                existing["status"] = cand_st
 
             if cand_origin and not existing.get("origin"):
                 existing["origin"] = cand_origin
@@ -600,6 +621,67 @@ def synthesize_manifest_for_topic(topic_dir: Path) -> Dict[str, Any]:
                 alias_map[to_canonical_id(clean_cand_title)] = nid
                 alias_map[normalize_concept_id(clean_cand_title)] = nid
             return nid
+
+    # 1. Ingest existing manifest.json if present on disk
+    man_file = topic_dir / "manifest.json"
+    existing_manifest_raw = None
+    if man_file.exists():
+        try:
+            existing_manifest_raw = json.loads(man_file.read_text(encoding="utf-8"))
+            if isinstance(existing_manifest_raw, dict):
+                topic_name = existing_manifest_raw.get("topic") or topic_name
+                domain = existing_manifest_raw.get("domain") or domain
+                ref_scope = existing_manifest_raw.get("reference_scope") or ref_scope
+                for m_node in existing_manifest_raw.get("nodes", []):
+                    nid = m_node.get("id") or to_canonical_id(m_node.get("label") or m_node.get("title"))
+                    if nid:
+                        initial_node_ids.add(nid)
+                        initial_node_ids.add(to_canonical_id(nid))
+                        add_or_merge_node(
+                            nid,
+                            m_node.get("title") or m_node.get("label") or nid,
+                            m_node.get("prerequisites") or [],
+                            m_node.get("status", "planned"),
+                            m_node.get("badge_label"),
+                            m_node.get("origin"),
+                            m_node.get("node_number")
+                        )
+        except Exception:
+            pass
+
+    # 2. Ingest state/knowledge_graph.json cluster for this topic
+    try:
+        kg = load_knowledge_graph()
+        topic_slug = sanitize_topic(topic_dir.name)
+        topic_name_slug = sanitize_topic(topic_name)
+        for kn in kg.get("nodes", []):
+            k_topics = kn.get("topics") or []
+            if isinstance(k_topics, str):
+                k_topics = [k_topics]
+            norm_k_topics = [sanitize_topic(t) for t in k_topics]
+            if topic_slug in norm_k_topics or topic_name_slug in norm_k_topics:
+                kn_id = kn.get("id") or to_canonical_id(kn.get("label") or "")
+                add_or_merge_node(
+                    kn_id,
+                    kn.get("label") or kn_id,
+                    [],
+                    kn.get("status") or "planned",
+                    kn.get("badge_label"),
+                    kn.get("origin")
+                )
+
+        # Ingest knowledge graph prerequisite edges
+        for ke in kg.get("edges", []):
+            src = ke.get("source")
+            tgt = ke.get("target")
+            if src and tgt:
+                src_canon = alias_map.get(src) or alias_map.get(to_canonical_id(src)) or src
+                tgt_canon = alias_map.get(tgt) or alias_map.get(to_canonical_id(tgt)) or tgt
+                if tgt_canon in nodes_dict and src_canon in nodes_dict and src_canon != tgt_canon:
+                    if src_canon not in nodes_dict[tgt_canon]["prerequisites"]:
+                        nodes_dict[tgt_canon]["prerequisites"].append(src_canon)
+    except Exception:
+        pass
 
     session_file = topic_dir / "session.json"
     session_completed: List[str] = []
@@ -638,8 +720,10 @@ def synthesize_manifest_for_topic(topic_dir: Path) -> Dict[str, Any]:
         except Exception:
             pass
 
+    # 3. Scan all *.md files in notes/<topic>/ (excluding hidden folders like .session and .diagnostic)
+    missing_notes_merged = False
     for md_path in sorted(topic_dir.glob("*.md")):
-        if md_path.name.lower() in ("notes.md", "lesson_notes.md"):
+        if md_path.name.startswith(".") or md_path.name.lower() in ("notes.md", "lesson_notes.md"):
             continue
         try:
             content = md_path.read_text(encoding="utf-8")
@@ -654,16 +738,28 @@ def synthesize_manifest_for_topic(topic_dir: Path) -> Dict[str, Any]:
                 c_p = str(rp).replace("[[", "").replace("]]", "").replace("[", "").replace("]", "").strip()
                 if c_p and c_p not in clean_prereqs:
                     clean_prereqs.append(c_p)
-            status = fm.get("status")
-            if not status:
+            
+            fm_status = str(fm.get("status") or "").strip().strip('"\'')
+            if fm_status.lower() in ("mastered", "completed"):
+                status = "mastered"
+            elif fm_status:
+                status = fm_status
+            else:
                 if any(to_canonical_id(c) == to_canonical_id(clean_title) for c in session_completed):
                     status = "mastered"
                 elif session_current and to_canonical_id(session_current) == to_canonical_id(clean_title):
                     status = "active"
+                elif "[!success]" in content:
+                    status = "mastered"
                 else:
-                    status = "mastered" if "[!success]" in content else "in_progress"
+                    status = "pending"
 
-            badge = "Curriculum Mastered" if status in ("mastered", "completed") else "In Progress"
+            badge = "Curriculum Mastered" if status in ("mastered", "completed") else ("In Progress" if status in ("active", "in_progress") else "Planned")
+            
+            matched_key = find_matching_node_key(nid, clean_title, nodes_dict)
+            if not matched_key and nid not in initial_node_ids and to_canonical_id(nid) not in initial_node_ids:
+                missing_notes_merged = True
+
             add_or_merge_node(nid, clean_title, clean_prereqs, status, badge, fm.get("origin"))
         except Exception:
             pass
@@ -706,12 +802,18 @@ def synthesize_manifest_for_topic(topic_dir: Path) -> Dict[str, Any]:
                 clean_prs.append(resolved)
         node["prerequisites"] = clean_prs
 
-    return {
+    manifest_result = {
         "topic": topic_name,
         "domain": domain,
         "reference_scope": ref_scope,
         "nodes": list(nodes_dict.values())
     }
+
+    # Atomically save manifest.json on disk if missing notes were merged or manifest changed
+    if missing_notes_merged or not man_file.exists() or existing_manifest_raw != manifest_result:
+        save_topic_manifest(topic_dir, manifest_result)
+
+    return manifest_result
 
 
 def reconcile_startup_state() -> None:
@@ -1117,7 +1219,7 @@ def load_state() -> Dict[str, Any]:
     t_dir = get_topic_notes_dir(active_topic) if has_active_topic else None
     manifest = None
     if has_active_topic and t_dir and t_dir.exists():
-        manifest = load_topic_manifest(t_dir)
+        manifest = synthesize_manifest_for_topic(t_dir)
 
     # Dynamic DAG compilation
     compiled_dag = "graph TD\n"
@@ -2381,10 +2483,7 @@ def load_topic(req: TopicRequest) -> Dict[str, Any]:
         )
     sanitized = target_dir.name
 
-    manifest = load_topic_manifest(target_dir)
-    if not manifest:
-        manifest = synthesize_manifest_for_topic(target_dir)
-        save_topic_manifest(target_dir, manifest)
+    manifest = synthesize_manifest_for_topic(target_dir)
 
     restored_topic_name = manifest.get("topic") or topic_name
     restored_ref_scope = manifest.get("reference_scope") or {"collection": "general", "tags": []}
