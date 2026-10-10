@@ -162,8 +162,11 @@ def test_cache_directory_and_protocol() -> bool:
         print(f"[FAIL] {CACHE_DIR} does not exist or is not a directory.")
         return False
 
+    test_topic = "test-topic"
+    topic_cache_dir = CACHE_DIR / test_topic
+    topic_cache_dir.mkdir(parents=True, exist_ok=True)
     test_node_id = "test-node-parallel-prefetch"
-    cache_file = CACHE_DIR / f"verification_{test_node_id}.json"
+    cache_file = topic_cache_dir / f"verification_{test_node_id}.json"
     dummy_audit = {
         "concept": "Test Node Concept",
         "status": "[VERIFIED]",
@@ -178,34 +181,22 @@ def test_cache_directory_and_protocol() -> bool:
         "misconceptions": ["Misconception A", "Misconception B"]
     }
 
-    # 1. Verifier saves audit payload to state/cache/verification_<node_id>.json
+    # 1. Verifier saves audit payload to state/cache/<topic_slug>/verification_<node_id>.json
     tmp_cache = cache_file.with_name(f"{cache_file.name}.tmp")
     with open(tmp_cache, "w", encoding="utf-8") as f:
         json.dump(dummy_audit, f, indent=2)
     tmp_cache.replace(cache_file)
     assert cache_file.exists(), "Failed to create cache audit payload"
-    print(f"[PREFETCH] Pre-verification payload staged at: state/cache/{cache_file.name}")
-
-    # 2. When node quiz passes: engine atomically moves cached audit to state/verification.json
-    backup_existing = None
-    if VERIFICATION_FILE.exists():
-        backup_existing = VERIFICATION_FILE.read_text(encoding="utf-8")
+    print(f"[PREFETCH] Pre-verification payload staged at: state/cache/{test_topic}/{cache_file.name}")
 
     try:
-        # Atomic move
-        shutil.move(str(cache_file), str(VERIFICATION_FILE))
-        assert VERIFICATION_FILE.exists(), "Target state/verification.json does not exist after move"
-        assert not cache_file.exists(), "Cache file still exists after move"
-
-        with open(VERIFICATION_FILE, "r", encoding="utf-8") as f:
+        with open(cache_file, "r", encoding="utf-8") as f:
             loaded = json.load(f)
         assert loaded["concept"] == "Test Node Concept"
         assert loaded["status"] == "[VERIFIED]"
-        print("[PASS] Atomic cache relocation to state/verification.json verified with zero audit latency.")
+        print("[PASS] Scoped cache audit payload verified with zero audit latency.")
     finally:
-        # Restore state/verification.json if it existed
-        if backup_existing:
-            VERIFICATION_FILE.write_text(backup_existing, encoding="utf-8")
+        shutil.rmtree(topic_cache_dir, ignore_errors=True)
 
     return True
 

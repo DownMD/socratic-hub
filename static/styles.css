@@ -894,3 +894,71 @@ body {
 .monospace {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
+
+/* ==========================================================================
+   Saved Topics Modal & Cards
+   ========================================================================== */
+#saved-topics-modal {
+  animation: fadeInModal 0.15s ease-out;
+}
+
+@keyframes fadeInModal {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.modal-topic-card {
+  background: #121316;
+  border: 1px solid #27272a;
+  border-radius: 8px;
+  padding: 14px 16px;
+  transition: all 0.15s ease-in-out;
+}
+
+.modal-topic-card:hover {
+  border-color: #3f3f46;
+  background: #16171b;
+}
+
+/* Floating Glass Filter Bar */
+#graph-floating-filter-bar {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.45);
+}
+
+/* ==========================================================================
+   Compact Branch Jumper HUD
+   ========================================================================== */
+#branch-jumper-hud {
+  padding: 0.5rem;
+  border-radius: 0.75rem;
+  background: rgba(18, 19, 22, 0.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+#branch-jumper-hud .hud-header {
+  font-size: 9px;
+  color: #a1a1aa;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+#branch-jumper-hud button,
+.branch-jumper-btn {
+  font-size: 10px;
+  border-radius: 9999px;
+  border: 1px solid #27272a;
+  padding: 0.2rem 0.5rem;
+  transition: all 0.15s ease-in-out;
+}

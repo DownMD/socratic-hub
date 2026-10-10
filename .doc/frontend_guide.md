@@ -57,7 +57,7 @@ Both `#panel-roadmap` and `#panel-quiz` support collapsing to a 44px vertical ra
 - Collapsed rail shows a vertical monospace label (`.rail-vertical-label` with `writing-mode: vertical-rl`).
 - Clicking the rail re-expands the panel.
 
-**Draggable Resizer** (`#roadmap-resizer`): A 6px `col-resize` divider between Panel 1 and Panel 2. Drag events in `app.js` set the Panel 1 width dynamically as a percentage of the container.
+**Draggable Resizer** (`#roadmap-resizer`): A 6px `col-resize` divider between Panel 1 and Panel 2. Drag events in `app.js` utilize Pointer Capture (`setPointerCapture`) to prevent cursor escape during rapid movement and dynamically update Panel 1 width as a percentage of the container.
 
 ---
 
@@ -70,6 +70,7 @@ Both `#panel-roadmap` and `#panel-quiz` support collapsing to a 44px vertical ra
 - On state update, `app.js` injects the `dag_mermaid` string into a `<div class="mermaid">` element and calls `mermaid.run()`.
 - The active node count is shown in `#dag-node-count`.
 - Mermaid SVG styling: `max-width: none; width: auto; min-height: 100%; height: auto` — never clipped.
+- **HUD Branch Jumper** (`#roadmap-branch-hud`): Compact bottom-docked branch jumper displaying active tracks and enabling fast navigation across parallel prerequisite tracks without obscuring the diagram canvas.
 
 **CSS class semantics** (applied by `bridge.py update_roadmap_styling`):
 
@@ -130,7 +131,7 @@ Opened via `[GRAPH]` button or `openGraphModal()`.
   - `diagnostic` → sky blue
 - Clicking a node opens the **note drawer** on the right side (`.note-drawer` panel) showing the vault markdown for that node (fetched from `GET /api/notes/{node_id}`).
 - The note drawer is resizable via a horizontal drag bar (`.graph-resizer`).
-- Floating navigation controls (`.graph-nav-controls`): zoom in, zoom out, fit view buttons.
+- Floating navigation controls (`.graph-nav-controls`): zoom in, zoom out, fit view buttons. The **Fit View** (`FIT`) button computes the exact bounding-box centroid of all active nodes rather than the canvas origin, ensuring optimal centering and zoom framing without visual drift.
 - `Esc` key: closes the note drawer or the graph modal.
 - Clicking canvas background clears node focus and removes the dimming highlight.
 
@@ -148,12 +149,14 @@ Opened via `[GRAPH]` button or `openGraphModal()`.
 
 ---
 
-## Saved Topics Dropdown
+## Saved Topics Dropdown & Vault Navigation
 
 - `#btn-saved-topics` opens `#saved-topics-menu` (Tailwind dropdown).
 - Fetches `GET /api/topics` and renders `.topic-item` cards per topic.
-- Each card shows: topic name, mastered node count, active node label.
-- Clicking a card calls `POST /api/topics/load` and switches workspace to the study layout.
+- **Status Filter Chips**: Filter topics by `[ALL]`, `[IN PROGRESS]`, and `[COMPLETED]` tabs.
+- **Concept-Level Vault Search**: Real-time filtering across topic names AND individual child concept nodes/titles.
+- **Zero-Token Static Reading Mode**: Selecting a topic in read mode (`POST /api/topics/load` with `mode='read'`) renders complete lesson notes and roadmaps instantly without active LLM orchestration.
+- **Delete Topic**: Direct deletion of a topic vault via `POST /api/topics/delete` with confirmation modal.
 - Also available as `#idle-topic-picker` in the idle command center.
 
 ---

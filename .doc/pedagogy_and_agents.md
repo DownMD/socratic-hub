@@ -45,9 +45,10 @@ Budget = clamp(3, 2 × [number of prerequisite tracks], 8)
 
 ### Quiz Delivery & Baseline Capture
 
-1. Write `state/quiz.json` with `question`, `options`, `correct_idx`, `explanation`.
+1. Write `notes/<topic>/.diagnostic/diagnostic_quiz.json` with `question`, `options`, `correct_idx`, `explanation`.
 2. Run `bridge.py wait-answer --timeout 180`.
 3. On pass: register concept via `POST /api/graph/sync` with `status: "mastered"`, `origin: "diagnostic"`, `badge_label: "Baseline Knowledge"`.
+4. Synthesize atomic baseline note directly in `notes/<topic>/<node_id>.md` (frontmatter: `id`, `title`, `domain`, `status: "mastered"`, `origin: "diagnostic"`, wikilinks).
 
 ---
 
@@ -77,7 +78,7 @@ The agent generates **12 to 25+ granular nodes** regardless of local reference c
 
 ### Baseline Contract Immutability
 
-Before drafting `state/roadmap.mmd` or `state/curriculum.json`, the agent **must** read `state/knowledge_graph.json` and reuse Phase 1 baseline node IDs and titles **verbatim**. Rephrasing is strictly prohibited.
+Before drafting `notes/<topic>/manifest.json`, the agent **must** read `state/knowledge_graph.json` and reuse Phase 1 baseline node IDs and titles **verbatim**. Rephrasing is strictly prohibited.
 
 ---
 
@@ -87,28 +88,44 @@ Before drafting `state/roadmap.mmd` or `state/curriculum.json`, the agent **must
 
 ```
 Node N active
-  → Write notes (lesson_notes.md + notes/<topic>/<node_id>.md)
-  → Write quiz (state/quiz.json)
+  → Write notes directly (notes/<topic>/<node_id>.md)
+  → Write quiz (notes/<topic>/.session/quiz.json)
   → [HEADLESS notification]
   → bridge.py wait-answer
   → On pass: bridge.py advance-node
   → Node N+1 active
 ```
 
-### Exact Header Invariants
+### Direct Note Authoring & Frontmatter Invariants
 
-Every lesson appended to `notes/lesson_notes.md` must match **character-for-character** the `title` field in `state/curriculum.json`:
+Every lesson is authored directly into `notes/<topic>/<node_id>.md` with Obsidian YAML frontmatter matching the node in `notes/<topic>/manifest.json`:
 
-```
-## Node <N>: <Exact Title from curriculum.json>
+```yaml
+---
+id: "<node_id>"
+title: "<Exact Title from manifest.json>"
+domain: "<domain>"
+topic: "<Topic Name>"
+status: "in_progress"
+origin: "curriculum"
+badge_label: "Active Lesson"
+---
 ```
 
 And for baseline notes:
-```
-## Baseline: <Exact Concept Title>
+```yaml
+---
+id: "<node_id>"
+title: "<Exact Concept Title>"
+domain: "<domain>"
+topic: "<Topic Name>"
+status: "mastered"
+origin: "diagnostic"
+badge_label: "Baseline Knowledge"
+---
 ```
 
-These patterns are parsed by `bridge.py advance-node` via regex to extract the section for vault archival.
+When `bridge.py advance-node` runs upon quiz completion, it directly promotes the note's frontmatter to `status: "mastered"`, updates `manifest.json`, and outputs the next node to teach.
 
 ### Headless Chat Policy
 
@@ -205,9 +222,29 @@ The agent writes like a **senior practitioner sketching on a whiteboard**. Speci
 ### Sliding-Window Lookahead (Horizon = 2)
 
 While Node N is active and `bridge.py wait-answer` is running, the agent dispatches background verification for Nodes N+1 and N+2:
-- Saves to `state/cache/verification_<node_id>.json` using the **exact** `id` from `state/curriculum.json`.
+- Saves to `state/cache/<topic_slug>/verification_<node_id>.json` using the **exact** `id` from `notes/<topic>/manifest.json`.
 - These run **asynchronously** (via detached subagent tasks) and must **never block** the active teaching UI.
 - `bridge.py advance-node` checks the cache and promotes it — or falls back to synchronous verification.
+
+---
+
+## Sub-Agent Architecture (.agents/)
+
+The engine orchestrates specialized autonomous sub-agents with dedicated identity specifications:
+
+### Prior Knowledge Crawler (`.agents/prior_knowledge_crawler.md`)
+- **Role**: Semantic auditor analyzing historical vault masteries against planned curriculum concepts.
+- **Trigger**: Executed in Phase 1 via `python scripts/scan_prior_knowledge.py --topic "<topic>" --output "notes/<topic>/.diagnostic/prior_candidates.json"`.
+- **Classification Output**: Tags every candidate concept:
+  - `REUSE_CANONICAL`: Link existing vault note directly via relative wikilink.
+  - `EXTEND_CONTEXT`: Extend definition in new note while linking prior concept.
+  - `DOMAIN_HOMONYM`: Disambiguate with explicit domain scoping.
+  - `NOVEL`: New concept entirely.
+
+### Theoretical Verifier (`.agents/theoretical_verifier.md`)
+- **Role**: Adversarial academic auditor verifying theoretical models, operational trade-offs, prerequisites, and citations.
+- **Execution**: Audits upcoming nodes (N+1, N+2) against local textbook chunks and authoritative web sources.
+- **Cache Persistence**: Writes structured audit payloads directly to `state/cache/<topic_slug>/verification_<node_id>.json`.
 
 ---
 
@@ -221,7 +258,7 @@ Each node quiz has exactly **3 questions**:
 | Q2 | Operational trade-off (when to use X vs Y?) |
 | Q3 | Adversarial misconception check (what is NOT true about X?) |
 
-- Options are **randomised** before writing to `state/quiz.json` via `bridge.py shuffle_quiz()`.
+- Options are **randomised** before writing to `notes/<topic>/.session/quiz.json` via `bridge.py shuffle_quiz()`.
 - The shuffle is deterministic: identify correct option string → shuffle list → recompute index.
 - `correct_idx` and `correct_index` are both updated after shuffle.
 - A quiz is considered passed if `score >= 0.70` OR `passed: true` OR `correct_count == total`.
@@ -235,5 +272,5 @@ Each node quiz has exactly **3 questions**:
 | `[BAN] A` | Never scan, grep, or read `server.py`, `bridge.py`, `static/index.html`, `static/app.js`, `static/styles.css` during teaching |
 | `[BAN] B` | Never run `scripts/sync_vault_index.py --rebuild` during an active teaching session |
 | `[BAN] B` | Never run `scripts/scan_prior_knowledge.py` sequentially per concept — batch only |
-| `[BAN] B` | Never read `state/roadmap.mmd`, `state/curriculum.json`, or `state/verification.json` immediately after `bridge.py advance-node` — trust stdout |
-| `[SEQUENCE] D` | Never generate `state/quiz.json` before `notes/lesson_notes.md` is written |
+| `[BAN] B` | Never read `notes/<topic>/manifest.json` immediately after `bridge.py advance-node` — trust stdout |
+| `[SEQUENCE] D` | Never generate `notes/<topic>/.session/quiz.json` before `notes/<topic>/<node_id>.md` is written |

@@ -1,6 +1,6 @@
 # API & State
 
-> Last rebuilt: .doc --all (2026-10-03)
+> Last rebuilt: .doc --all (2026-10-09)
 
 ---
 
@@ -12,45 +12,45 @@ All routes are declared in `server.py`. The app is exposed on `http://localhost:
 
 | Method | Route | Description |
 |---|---|---|
-| `GET` | `/api/state` | Returns full hydrated session state blob. Client polls this ~1s to re-render. |
-| `POST` | `/api/topic` | Sets active topic + reference scope. Writes `state/topic.json`. Sets phase to `probing`. |
-| `POST` | `/api/reset` | Clears all active session data: quiz, roadmap, notes. Sets topic to blank, phase to `idle`. |
-| `POST` | `/api/pause` | Creates `state/pause.flag`, sets phase to `PAUSED` in `topic.json`. |
+| `GET` | `/api/state` | Returns full hydrated session state blob from `state/active_session.json` and active topic `manifest.json`. Client polls this ~1s to re-render. |
+| `POST` | `/api/topic` | Sets active topic + reference scope. Writes `state/active_session.json`. Sets phase to `probing`. |
+| `POST` | `/api/reset` | Clears active session data. Resets `state/active_session.json` to idle. |
+| `POST` | `/api/pause` | Creates `state/pause.flag`, sets phase to `PAUSED` in `state/active_session.json`. |
 | `POST` | `/api/shutdown` | Sends `SIGTERM` to the Uvicorn process after a 0.5s delay. |
 
 ### Quiz & Answer
 
 | Method | Route | Description |
 |---|---|---|
-| `GET` | `/api/quiz` | Returns the active quiz from `state/quiz.json`, sanitized and normalized. |
-| `POST` | `/api/quiz` | Single-item quiz write (legacy). Writes one question to state and clears answer. |
-| `POST` | `/api/submit-quiz` | Batch quiz submission. Evaluates all answers, writes `state/answer.json`, returns evaluation payload with `passed`, `score`, `rationales`. |
-| `POST` | `/api/answer` | Single-item answer submission (legacy). Writes one answer record. |
-| `GET` | `/api/latest-answer` | Returns `latest_answer` from current state. Used by `bridge.py wait-answer` polling loop. |
+| `GET` | `/api/quiz` | Returns the active quiz from `notes/<topic>/.session/quiz.json` (or `.diagnostic/diagnostic_quiz.json`), sanitized and normalized. |
+| `POST` | `/api/quiz` | Writes quiz questions to `notes/<topic>/.session/quiz.json` (or `.diagnostic/diagnostic_quiz.json`). |
+| `POST` | `/api/submit-quiz` | Batch quiz submission. Evaluates all answers, writes `notes/<topic>/.session/answer.json`, returns evaluation payload with `passed`, `score`, `rationales`. |
+| `POST` | `/api/answer` | Single-item answer submission. Writes answer record to topic `.session/answer.json`. |
+| `GET` | `/api/latest-answer` | Returns `latest_answer` from active topic's `.session/answer.json`. Used by `bridge.py wait-answer` polling loop. |
 
 ### DAG & Notes
 
 | Method | Route | Description |
 |---|---|---|
-| `POST` | `/api/dag` | Writes Mermaid DAG string to state and sets phase to `teaching`. |
-| `POST` | `/api/lesson` | Appends a markdown chunk to in-memory state and `notes/lesson_notes.md`. |
-| `GET` | `/api/notes/{node_id}` | Resolves a note by node ID via 3-tier lookup: vault file → `lesson_notes.md` section → knowledge graph metadata. |
+| `POST` | `/api/dag` | Dynamically compiles or overrides Mermaid DAG string in state. |
+| `POST` | `/api/lesson` | Appends a markdown chunk to active note in `notes/<topic>/<node_id>.md`. |
+| `GET` | `/api/notes/{node_id}` | Resolves note by node ID directly from topic vault file `notes/<topic>/<node_id>.md` or knowledge graph metadata. |
 
-### Topics & Archive
+### Topics & Vault Management
 
 | Method | Route | Description |
 |---|---|---|
-| `GET` | `/api/topics` | Lists all discovered topics from `notes/` directories and `state/knowledge_graph.json`. |
-| `POST` | `/api/topics/load` | Loads a saved topic: restores `lesson_notes.md` + `roadmap.mmd`, updates `topic.json`, resolves active node from KG. |
-| `POST` | `/api/topics/discard` | Deletes `session.json` for a topic and resets state if it matches the active session. |
-| `POST` | `/api/archive` | Archives current session: copies `lesson_notes.md` and `roadmap.mmd` into `notes/<topic>/`, extracts completed nodes, writes `session.json`, marks nodes as `mastered` in KG. |
-| `POST` | `/api/restore` | Restores a topic from `notes/<topic>/` into active state. Legacy route (prefer `/api/topics/load`). |
+| `GET` | `/api/topics` | Lists all discovered topic vaults from `notes/` directories with metadata (`total_nodes`, `mastered_nodes`, `domain`, `status`). |
+| `POST` | `/api/topics/load` | Loads a saved topic (`mode='study'` or zero-token `mode='read'`), sets active topic in `state/active_session.json`, compiles Mermaid DAG from `manifest.json`. |
+| `DELETE` | `/api/topics/{topic_name}` | Permanently deletes a topic vault directory. |
+| `POST` | `/api/archive` | Archives current session, marks completed nodes as `mastered` in knowledge graph. |
+| `POST` | `/api/restore` | Restores topic vault into active session. |
 
 ### Knowledge Graph
 
 | Method | Route | Description |
 |---|---|---|
-| `GET` | `/api/graph/global` | Returns the full knowledge graph (`state/knowledge_graph.json`), bootstrapping from notes if empty. |
+| `GET` | `/api/graph/global` | Returns the global knowledge graph (`state/knowledge_graph.json`), bootstrapping from vault notes if empty. |
 | `POST` | `/api/graph/sync` | Merges incoming nodes and edges into the knowledge graph with status ranking, fuzzy deduplication, and degree guard. |
 
 ### Static Files
@@ -65,30 +65,28 @@ All routes are declared in `server.py`. The app is exposed on `http://localhost:
 ## Pydantic Request Models
 
 ```python
-TopicRequest         # topic: str, reference_scope: Optional[Dict]
-QuizRequest          # question, options, correct_idx, explanation
-AnswerRequest        # selected_idx, question_idx (default 0)
+TopicRequest            # topic: str, reference_scope: Optional[Dict], mode: Optional[str]
+QuizRequest             # question, options, correct_idx, explanation
+AnswerRequest           # selected_idx, question_idx (default 0)
 BatchQuizSubmitRequest  # node_id, answers: List[int], timestamp
-DagRequest           # mermaid: str
-LessonRequest        # markdown_chunk: str
-ArchiveRequest       # topic: Optional[str]
-RestoreRequest       # topic: str
-DiscardTopicRequest  # topic: str
-GraphSyncRequest     # nodes: List[Dict], edges: List[Dict]
+DagRequest              # mermaid: str
+LessonRequest           # markdown_chunk: str
+ArchiveRequest          # topic: Optional[str]
+RestoreRequest          # topic: str
+GraphSyncRequest        # nodes: List[Dict], edges: List[Dict]
 ```
 
 ---
 
 ## State JSON Schemas
 
-### `state/topic.json`
+### `state/active_session.json`
 
 ```json
 {
-  "topic": "<Topic Name>",
-  "phase": "idle | probing | teaching | PAUSED | completed",
+  "active_topic": "<Topic Name>",
+  "phase": "idle | probing | teaching | reading | PAUSED | completed",
   "active_node_id": "<Node ID> | null",
-  "active_node": "<Node Title> | null",
   "reference_scope": {
     "collection": "<Collection Name>",
     "tags": ["<tag-1>", "<tag-2>"]
@@ -96,24 +94,36 @@ GraphSyncRequest     # nodes: List[Dict], edges: List[Dict]
 }
 ```
 
-### `state/curriculum.json`
+### `notes/<Topic Name>/manifest.json`
 
 ```json
 {
+  "topic": "<Topic Name>",
+  "domain": "<Domain>",
+  "reference_scope": {
+    "collection": "<Collection Name>",
+    "tags": ["<tag-1>", "<tag-2>"]
+  },
   "nodes": [
     {
       "id": "<Node ID>",
       "title": "<Node Title>",
       "prerequisites": ["<Prerequisite Node ID>"],
-      "status": "completed | active | pending | mastered",
-      "description": "...",
-      "badge_label": "Curriculum Mastered | In Progress | Active Lesson"
+      "status": "completed | active | planned | mastered",
+      "origin": "curriculum | diagnostic",
+      "badge_label": "Curriculum Mastered | In Progress | Baseline Knowledge"
+    }
+  ],
+  "edges": [
+    {
+      "source": "<Source Node ID>",
+      "target": "<Target Node ID>"
     }
   ]
 }
 ```
 
-### `state/quiz.json` (Multi-item Assessment Format)
+### `notes/<Topic Name>/.session/quiz.json` (Multi-item Assessment Format)
 
 ```json
 {
@@ -132,11 +142,11 @@ GraphSyncRequest     # nodes: List[Dict], edges: List[Dict]
 
 > **Math Escaping Invariant**: All LaTeX within JSON must use double-escaped backslashes (`\\(`, `\\frac{...}{...}`) to prevent JSON parse failures.
 
-### `state/answer.json` (Batch Evaluation Payload)
+### `notes/<Topic Name>/.session/answer.json` (Batch Evaluation Payload)
 
 ```json
 {
-  "node_id": "...",
+  "node_id": "<Node ID>",
   "batch": true,
   "answers": [2, 0, 1],
   "results": [{"question_idx": 0, "selected_idx": 2, "correct_idx": 2, "correct": true, "explanation": "..."}],
@@ -144,13 +154,13 @@ GraphSyncRequest     # nodes: List[Dict], edges: List[Dict]
   "total": 3,
   "score": 1.0,
   "passed": true,
-  "timestamp": "2026-10-03T03:06:13+00:00"
+  "timestamp": "2026-10-09T08:00:00+00:00"
 }
 ```
 
 > **Pass Threshold**: `bridge.py advance-node` considers a score ≥ 0.70 OR `passed: true` OR `correct_count == total` as passing.
 
-### `state/verification.json`
+### `state/cache/<topic_slug>/verification_<node_id>.json`
 
 ```json
 {
@@ -192,37 +202,37 @@ GraphSyncRequest     # nodes: List[Dict], edges: List[Dict]
 
 ## Caching Invariants
 
-### Lookahead Cache (`state/cache/`)
+### Lookahead Cache (`state/cache/<topic_slug>/`)
 
-- Files are named `state/cache/verification_<node_id>.json` using the **exact** `id` from `state/curriculum.json`.
-- When `advance-node` runs, it promotes the cache file for the next node to `state/verification.json` and deletes the cache entry.
-- The `[HORIZON_STATUS]` output shows Active, Cached, and Missing IDs.
-- If a cache file is missing, the verifier must be dispatched asynchronously in the background **without blocking** the UI.
+- Files are scoped by topic slug: `state/cache/<topic_slug>/verification_<node_id>.json`.
+- When Node N is being taught, lookahead verification audits for N+1 and N+2 are pre-staged by the `theoretical-verifier` sub-agent.
+- The `[HORIZON_STATUS]` output reports Active, Cached, and Missing IDs.
+- If a cache file is missing, the verifier is dispatched asynchronously in the background **without blocking** the UI.
 
 ### Atomic Write Pattern
 
-Every state file mutation uses a `.tmp` → `replace` pattern:
+Every file mutation uses a `.tmp` → `replace` pattern:
 ```python
 tmp = target.with_name(f"{target.name}.tmp")
-with open(tmp, "w") as f:
-    json.dump(data, f, indent=2)
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(data, f, indent=2, ensure_ascii=False)
 tmp.replace(target)
 ```
 
-### State Hydration Order (load_state)
+### State Hydration Order (`load_state`)
 
-On every `/api/state` call, `load_state()` hydrates in this order:
-1. `state/state.json` (primary unified state snapshot)
-2. Overlays from `state/topic.json` (topic, phase, active_node_id, reference_scope)
-3. Overlays from `state/roadmap.mmd` (dag_mermaid)
-4. Overlays from `notes/lesson_notes.md` (lesson_markdown, notes)
-5. Overlays from `state/quiz.json` (active_quiz)
-6. Recomputes `session_active` from topic + phase values.
+On every `/api/state` call, `load_state()` hydrates strictly from:
+1. `state/active_session.json` (active topic, phase, active_node_id, reference_scope)
+2. `notes/<active_topic>/manifest.json` (dynamic Mermaid DAG compilation and nodes list)
+3. `notes/<active_topic>/<active_node_id>.md` (lesson markdown)
+4. `notes/<active_topic>/.session/quiz.json` (active_quiz)
+5. `notes/<active_topic>/.session/answer.json` (latest_answer)
+6. Derives `status` (`active` if valid topic, `reading` if read mode, `standby` if idle with no topic).
 
 ### Canonical Topic Notes Directory Resolution (`get_topic_notes_dir`)
 
 `server.py` and `bridge.py` share the centralized `get_topic_notes_dir(topic_name)` helper:
-- **Phantom Guard**: If `topic_name` is empty, `None`, `"Not Set"`, `"not-set"`, or `"none"` $\to$ returns `None` (preventing `notes/not-set/` creation).
+- **Phantom Guard**: If `topic_name` is empty, `None`, `"Not Set"`, `"not-set"`, or `"none"` $\to$ returns `None` (preventing phantom directory creation).
 - **Title Case Canonical First**: Returns `notes/<Topic Name>` if existing.
 - **Legacy Slug Fallback**: Returns `notes/<slug>` if existing from prior archives.
 - **Default Creation**: Returns `notes/<Topic Name>` (Title Case default).
@@ -234,11 +244,11 @@ When merging via `/api/graph/sync`, statuses are ranked:
 - `active` = 2  
 - `mastered` = 3
 
-A node's status can only be promoted upward, never downgraded. Exception: if a node is `mastered`, it **cannot** be overwritten even by an `active` sync request.
+A node's status can only be promoted upward, never downgraded. If a node is `mastered`, it **cannot** be overwritten even by an `active` sync request.
 
 ### Degree Guard
 
 After every `/api/graph/sync`, isolated nodes (degree = 0) are auto-linked via:
-1. Curriculum `prerequisites` fields (downstream link)
-2. Curriculum prerequisite parents (upstream link)
-3. If still degree = 0 after both passes → the node is rejected and not inserted.
+1. Manifest `prerequisites` fields (downstream link)
+2. Manifest prerequisite parents (upstream link)
+3. If still degree = 0 after both passes $\to$ the node is rejected and not inserted.

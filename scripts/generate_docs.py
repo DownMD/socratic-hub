@@ -129,13 +129,13 @@ def audit_documentation() -> Tuple[bool, List[str]]:
     if not DOC_DIR.exists():
         return False, [f"Documentation directory {DOC_DIR} does not exist."]
 
-    # Check active topic from state/topic.json if it exists and has content
+    # Check active topic from state/active_session.json if it exists and has content
     active_topic = None
-    topic_file = STATE_DIR / "topic.json"
-    if topic_file.exists():
+    session_file = STATE_DIR / "active_session.json"
+    if session_file.exists():
         try:
-            tdata = json.loads(topic_file.read_text(encoding="utf-8"))
-            top = tdata.get("topic", "").strip()
+            sdata = json.loads(session_file.read_text(encoding="utf-8"))
+            top = (sdata.get("active_topic") or sdata.get("topic") or "").strip()
             if top and top.lower() not in ("not set", "default"):
                 active_topic = top
         except Exception:

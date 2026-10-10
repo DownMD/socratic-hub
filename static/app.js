@@ -334,22 +334,28 @@ function resetRoadmapZoom() {
   if (svg.empty()) return;
 
   const scrollArea = document.getElementById('dag-scroll-area');
-  const width = (scrollArea && scrollArea.clientWidth) || container.clientWidth || 400;
+  const width = (scrollArea && scrollArea.clientWidth) || container.clientWidth || 300;
   const height = (scrollArea && scrollArea.clientHeight) || container.clientHeight || 500;
 
-  const g = svg.select('g');
+  let g = svg.select('g');
   if (g.empty()) return;
+
   const bbox = g.node().getBBox();
   if (!bbox || bbox.width === 0 || bbox.height === 0) return;
 
-  const padding = 40;
-  const scale = Math.max(0.4, Math.min(1.15, Math.min((width - padding) / bbox.width, (height - padding) / bbox.height)));
-  const tx = (width - bbox.width * scale) / 2 - bbox.x * scale;
-  const ty = Math.max(20, (height - bbox.height * scale) / 2 - bbox.y * scale);
+  const padding = 24;
+  const availableW = Math.max(50, width - padding * 2);
+  const availableH = Math.max(50, height - padding * 2);
+  const scale = Math.min(1.15, Math.max(0.12, Math.min(availableW / bbox.width, availableH / bbox.height)));
+
+  const midX = bbox.x + bbox.width / 2;
+  const midY = bbox.y + bbox.height / 2;
+  const tx = width / 2 - scale * midX;
+  const ty = height / 2 - scale * midY;
 
   const initialTransform = d3.zoomIdentity.translate(tx, ty).scale(scale);
   currentRoadmapTransform = initialTransform;
-  svg.transition().duration(300).call(roadmapZoomBehavior.transform, initialTransform);
+  svg.transition().duration(250).call(roadmapZoomBehavior.transform, initialTransform);
 }
 
 function zoomRoadmapBy(factor) {
@@ -386,6 +392,7 @@ function renderRoadmapStandby() {
   if (!container) return;
   setupRoadmapHUDControls();
   currentRoadmapMode = 'standby';
+  currentRoadmapTransform = null;
   container.innerHTML = ROADMAP_STANDBY_HTML;
 }
 
@@ -440,7 +447,7 @@ async function renderRoadmap(code) {
         const g = svg.select('g');
         if (!g.empty()) {
           roadmapZoomBehavior = d3.zoom()
-            .scaleExtent([0.4, 3.0])
+            .scaleExtent([0.1, 4.0])
             .on('zoom', (event) => {
               currentRoadmapTransform = event.transform;
               g.attr('transform', event.transform);
@@ -453,7 +460,7 @@ async function renderRoadmap(code) {
           if (currentRoadmapTransform) {
             svg.call(roadmapZoomBehavior.transform, currentRoadmapTransform);
           } else {
-            resetRoadmapZoom();
+            setTimeout(() => resetRoadmapZoom(), 50);
           }
         }
       }
@@ -788,6 +795,11 @@ function renderLesson(markdown, activeNodeId = null, activeNodeLabel = null) {
   if (panelNotes) {
     panelNotes.scrollTop = 0;
   }
+
+  // Update HUD Branch Jumper
+  if (typeof updateBranchJumperHUD === 'function') {
+    updateBranchJumperHUD();
+  }
 }
 
 // Backward-compatible alias
@@ -854,6 +866,22 @@ function renderQuiz(quizData, latestAnswer) {
           <div class="text-[11px] text-slate-500 font-mono">
             [STANDBY] Progress preserved. Web server remains active.
           </div>
+        </div>
+      `;
+    }
+    return;
+  }
+
+  if (cachedState && String(cachedState.phase).toUpperCase() === 'READING') {
+    if (pill) {
+      pill.textContent = '[READING]';
+      pill.className = 'text-[10px] font-mono px-2 py-0.5 rounded bg-sky-950/40 text-sky-400 border border-sky-500/30';
+    }
+    if (container) {
+      container.innerHTML = `
+        <div class="p-6 rounded-xl bg-slate-900/60 border border-slate-800 text-center space-y-2 font-mono">
+          <div class="text-xs font-bold text-sky-400">[READING MODE]</div>
+          <p class="text-xs text-zinc-400 font-sans">Browsing topic notes in zero-token read mode. Click any node on the roadmap to inspect its contents.</p>
         </div>
       `;
     }
@@ -1218,31 +1246,40 @@ function setupRoadmapResizer() {
   let startX = 0;
   let startWidth = 0;
 
-  resizer.addEventListener('mousedown', (e) => {
+  resizer.addEventListener('pointerdown', (e) => {
     isDragging = true;
     startX = e.clientX;
     startWidth = roadmapPanel.getBoundingClientRect().width;
     resizer.classList.add('is-dragging');
+    try {
+      resizer.setPointerCapture(e.pointerId);
+    } catch (err) {}
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
   });
 
-  window.addEventListener('mousemove', (e) => {
+  resizer.addEventListener('pointermove', (e) => {
     if (!isDragging) return;
     const deltaX = e.clientX - startX;
     const newWidth = Math.max(180, Math.min(window.innerWidth * 0.6, startWidth + deltaX));
     roadmapPanel.style.width = `${newWidth}px`;
   });
 
-  window.addEventListener('mouseup', () => {
+  const stopDragging = (e) => {
     if (isDragging) {
       isDragging = false;
       resizer.classList.remove('is-dragging');
+      try {
+        resizer.releasePointerCapture(e.pointerId);
+      } catch (err) {}
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
       localStorage.setItem('roadmap_panel_width', `${roadmapPanel.getBoundingClientRect().width}px`);
     }
-  });
+  };
+
+  resizer.addEventListener('pointerup', stopDragging);
+  resizer.addEventListener('pointercancel', stopDragging);
 }
 
 // Collapsible Side Panels Navigation & Handlers
@@ -1455,6 +1492,9 @@ function exitReferenceMode() {
       renderLesson('');
     }
   }
+  if (typeof updateBranchJumperHUD === 'function') {
+    updateBranchJumperHUD();
+  }
 }
 
 // Backward compatibility alias
@@ -1552,6 +1592,9 @@ async function loadNodeReference(nodeId, nodeLabel) {
       </div>
     `;
   }
+  if (typeof updateBranchJumperHUD === 'function') {
+    updateBranchJumperHUD();
+  }
 }
 
 // Backward-compatibility alias
@@ -1605,6 +1648,147 @@ window.loadNodeReference = loadNodeReference;
 window.loadNoteIntoWorkspace = loadNodeReference;
 window.exitReferenceMode = exitReferenceMode;
 window.returnToActiveLesson = exitReferenceMode;
+
+// HUD Branch Jumper & Hotkey Note Traversal
+let activeBranches = [];
+
+function getActiveManifest() {
+  if (cachedState && cachedState.manifest && Array.isArray(cachedState.manifest.nodes)) {
+    return cachedState.manifest;
+  }
+  if (cachedState && cachedState.topic && Array.isArray(savedTopicsCache)) {
+    const curSlug = String(cachedState.topic).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    const found = savedTopicsCache.find(t => t.slug === curSlug || String(t.name).toLowerCase() === String(cachedState.topic).toLowerCase());
+    if (found && Array.isArray(found.nodes)) {
+      return {
+        topic: found.name,
+        nodes: found.nodes.map(n => typeof n === 'string' ? { id: n.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''), title: n, label: n } : n)
+      };
+    }
+  }
+  return null;
+}
+
+function getCurrentNoteIndexInManifest(manifest) {
+  if (!manifest || !Array.isArray(manifest.nodes) || manifest.nodes.length === 0) return -1;
+  const targetId = (isReferenceMode && currentReferenceNode)
+    ? currentReferenceNode.id
+    : (cachedState ? (cachedState.active_node_id || cachedState.active_node) : null);
+  if (!targetId) return 0;
+  const cleanTarget = String(targetId).toLowerCase().trim();
+  const canonTarget = cleanTarget.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+  for (let i = 0; i < manifest.nodes.length; i++) {
+    const n = manifest.nodes[i];
+    const nId = String(n.id || '').toLowerCase().trim();
+    const nTitle = String(n.title || n.label || '').toLowerCase().trim();
+    if (nId === cleanTarget || nTitle === cleanTarget) return i;
+    const canonId = nId.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    const canonTitle = nTitle.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    if (canonId === canonTarget || canonTitle === canonTarget) return i;
+  }
+  return 0;
+}
+
+function navigatePreviousNote() {
+  const manifest = getActiveManifest();
+  if (!manifest) return;
+  const currIdx = getCurrentNoteIndexInManifest(manifest);
+  if (currIdx > 0) {
+    const prevNode = manifest.nodes[currIdx - 1];
+    loadNodeReference(prevNode.id, prevNode.title || prevNode.label || prevNode.id);
+  }
+}
+
+function navigateNextNote() {
+  const manifest = getActiveManifest();
+  if (!manifest) return;
+  const currIdx = getCurrentNoteIndexInManifest(manifest);
+  if (currIdx !== -1 && currIdx < manifest.nodes.length - 1) {
+    const nextNode = manifest.nodes[currIdx + 1];
+    loadNodeReference(nextNode.id, nextNode.title || nextNode.label || nextNode.id);
+  }
+}
+
+window.navigatePreviousNote = navigatePreviousNote;
+window.navigateNextNote = navigateNextNote;
+
+function updateBranchJumperHUD() {
+  const hud = document.getElementById('branch-jumper-hud');
+  const linksContainer = document.getElementById('branch-jumper-links');
+  if (!hud || !linksContainer) return;
+
+  const manifest = getActiveManifest();
+  if (!manifest || !Array.isArray(manifest.nodes)) {
+    hud.classList.add('hidden');
+    activeBranches = [];
+    return;
+  }
+
+  const currTargetId = (isReferenceMode && currentReferenceNode)
+    ? currentReferenceNode.id
+    : (cachedState ? (cachedState.active_node_id || cachedState.active_node) : null);
+  if (!currTargetId) {
+    hud.classList.add('hidden');
+    activeBranches = [];
+    return;
+  }
+
+  const cleanCurr = String(currTargetId).toLowerCase().trim();
+  const currIdCanon = cleanCurr.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+  const nodes = manifest.nodes;
+  const branches = [];
+
+  // 1. Check edges array if present
+  if (Array.isArray(manifest.edges)) {
+    manifest.edges.forEach(e => {
+      const sCanon = String(e.source || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      if (sCanon === currIdCanon) {
+        const targetNode = nodes.find(n => {
+          const nCanon = String(n.id || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+          return nCanon === String(e.target || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+        });
+        if (targetNode && !branches.some(b => b.id === targetNode.id)) {
+          branches.push(targetNode);
+        }
+      }
+    });
+  }
+
+  // 2. Check prerequisites across all nodes
+  nodes.forEach(n => {
+    const prereqs = Array.isArray(n.prerequisites) ? n.prerequisites : (n.prerequisites ? [n.prerequisites] : []);
+    const isChild = prereqs.some(pr => {
+      const prClean = String(pr).replace(/\[\[|\]\]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      return prClean === currIdCanon;
+    });
+    if (isChild && !branches.some(b => b.id === n.id)) {
+      branches.push(n);
+    }
+  });
+
+  activeBranches = branches;
+
+  if (branches.length > 0) {
+    hud.classList.remove('hidden');
+    linksContainer.innerHTML = branches.map((b, idx) => {
+      const keyNum = idx + 1;
+      const title = b.title || b.label || b.id;
+      return `
+        <button type="button" onclick="loadNodeReference('${escapeHtml(b.id)}', '${escapeHtml(title)}')" class="branch-jumper-btn flex items-center justify-between gap-1.5 px-2 py-0.5 rounded-full bg-[#16171b] hover:bg-sky-500/10 border border-[#27272a] hover:border-sky-500/40 text-zinc-300 hover:text-sky-300 transition-colors text-left w-full cursor-pointer text-[10px]">
+          <span class="truncate">${escapeHtml(title)}</span>
+          ${keyNum <= 9 ? `<kbd class="px-1 py-0.2 rounded bg-zinc-800 text-[8px] text-zinc-400 border border-zinc-700 font-mono shrink-0">${keyNum}</kbd>` : ''}
+        </button>
+      `;
+    }).join('');
+  } else {
+    hud.classList.add('hidden');
+    linksContainer.innerHTML = '';
+  }
+}
+
+window.updateBranchJumperHUD = updateBranchJumperHUD;
 
 // Explicit user action to enter Study Mode
 let isStudyViewExplicitlyActive = false;
@@ -1816,6 +2000,10 @@ function updateUI(newState, force = false) {
     }
     renderQuiz(newState.active_quiz, newState.latest_answer);
   }
+
+  if (typeof updateBranchJumperHUD === 'function') {
+    updateBranchJumperHUD();
+  }
 }
 
 const renderState = updateUI;
@@ -1891,13 +2079,84 @@ function showToast(message, type = 'success') {
 }
 
 // Saved Topics Menu Management & Robust Discovery
+let savedTopicsCache = [];
+let activeDomainFilter = 'all';
+let activeSavedTopicsStatusFilter = 'all';
+
+function setSavedTopicsStatusFilter(status) {
+  activeSavedTopicsStatusFilter = status;
+  const chipAll = document.getElementById('status-chip-all');
+  const chipInProgress = document.getElementById('status-chip-in_progress');
+  const chipCompleted = document.getElementById('status-chip-completed');
+
+  const chips = [
+    { id: 'all', el: chipAll },
+    { id: 'in_progress', el: chipInProgress },
+    { id: 'completed', el: chipCompleted }
+  ];
+
+  chips.forEach(c => {
+    if (!c.el) return;
+    if (c.id === status) {
+      c.el.className = 'px-2.5 py-1 rounded-lg text-xs font-mono bg-sky-500/20 text-sky-300 border border-sky-500/30';
+    } else {
+      c.el.className = 'px-2.5 py-1 rounded-lg text-xs font-mono text-zinc-400 hover:text-white border border-[#27272a] bg-[#16171b]';
+    }
+  });
+
+  renderSavedTopicsModalList();
+}
+window.setSavedTopicsStatusFilter = setSavedTopicsStatusFilter;
+
+function openSavedTopicsModal() {
+  const modal = document.getElementById('saved-topics-modal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  loadSavedTopics();
+}
+
+function closeSavedTopicsModal() {
+  const modal = document.getElementById('saved-topics-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+window.openSavedTopicsModal = openSavedTopicsModal;
+window.closeSavedTopicsModal = closeSavedTopicsModal;
+
+async function deleteSavedTopic(topicName) {
+  const confirmed = confirm(`Are you absolutely sure you want to delete topic vault "${topicName}"?\n\nThis will permanently delete the vault directory and notes.`);
+  if (!confirmed) return;
+  const doubleConfirmed = confirm(`Please confirm a second time: Permanently delete "${topicName}"? This cannot be undone.`);
+  if (!doubleConfirmed) return;
+
+  try {
+    const res = await fetch(`/api/topics/${encodeURIComponent(topicName)}`, {
+      method: 'DELETE'
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    showToast(`Deleted topic "${topicName}" successfully.`);
+    await loadSavedTopics();
+    await pollState();
+  } catch (err) {
+    showToast(`Failed to delete topic: ${err.message}`, 'error');
+  }
+}
+
+window.deleteSavedTopic = deleteSavedTopic;
+
+// Saved Topics Menu Management & Robust Discovery
 async function loadSavedTopics() {
   const containers = document.querySelectorAll('.topics-list-container, #saved-topics-dropdown, #topic-list-container, #saved-topics-list, #idle-topic-picker-list');
+  const modalList = document.getElementById('saved-topics-modal-list');
+  const domainFilterSelect = document.getElementById('saved-topics-domain-filter');
+  const modalCountBadge = document.getElementById('saved-modal-count-badge');
+
   try {
     const res = await fetch('/api/topics');
     if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
     const data = await res.json();
     const topics = Array.isArray(data) ? data : (data.topics || []);
+    savedTopicsCache = topics;
 
     if (typeof checkUnfinishedSession === 'function') {
       checkUnfinishedSession(topics);
@@ -1913,6 +2172,26 @@ async function loadSavedTopics() {
       }
     }
 
+    if (modalCountBadge) {
+      modalCountBadge.innerText = `${topics.length} Topic${topics.length === 1 ? '' : 's'}`;
+    }
+
+    // Populate Domain Filter Options in Modal
+    if (domainFilterSelect) {
+      const currentSelected = domainFilterSelect.value || 'all';
+      const domains = new Set();
+      topics.forEach(t => {
+        const d = t.domain || 'general';
+        domains.add(d);
+      });
+      domainFilterSelect.innerHTML = '<option value="all">All Domains</option>' +
+        Array.from(domains).sort().map(d => `<option value="${escapeHtml(d)}">${escapeHtml(d.toUpperCase())}</option>`).join('');
+      domainFilterSelect.value = currentSelected;
+    }
+
+    renderSavedTopicsModalList();
+
+    // Legacy fallback containers
     containers.forEach(container => {
       if (topics.length === 0) {
         container.innerHTML = '<div class="topic-empty-item">[NO SAVED TOPICS FOUND]</div>';
@@ -1933,40 +2212,154 @@ async function loadSavedTopics() {
     containers.forEach(container => {
       container.innerHTML = `<div class="topic-error-item">[ERROR: ${err.message}]</div>`;
     });
+    if (modalList) {
+      modalList.innerHTML = `<div class="p-6 text-center text-xs text-rose-400 font-mono">[ERROR: ${err.message}]</div>`;
+    }
   }
 }
+
 const fetchSavedTopics = loadSavedTopics;
+window.fetchSavedTopics = loadSavedTopics;
+window.loadSavedTopics = loadSavedTopics;
 
-function toggleSavedTopicsDropdown() {
-  const menu = document.getElementById('saved-topics-menu');
-  const chevron = document.getElementById('saved-topics-chevron');
-  if (!menu) return;
-  const isHidden = menu.classList.contains('hidden');
-  if (isHidden) {
-    menu.classList.remove('hidden');
-    if (chevron) chevron.classList.add('rotate-180');
-    loadSavedTopics();
-  } else {
-    menu.classList.add('hidden');
-    if (chevron) chevron.classList.remove('rotate-180');
+function renderSavedTopicsModalList() {
+  const modalList = document.getElementById('saved-topics-modal-list');
+  if (!modalList) return;
+
+  const searchInput = document.getElementById('saved-topics-search');
+  const domainFilterSelect = document.getElementById('saved-topics-domain-filter');
+  const searchVal = (searchInput ? searchInput.value : '').toLowerCase().trim();
+  const selectedDomain = domainFilterSelect ? domainFilterSelect.value : 'all';
+
+  let filtered = savedTopicsCache.filter(t => {
+    let matchSearch = !searchVal;
+    if (searchVal) {
+      if (t.name && t.name.toLowerCase().includes(searchVal)) {
+        matchSearch = true;
+      } else if (t.domain && t.domain.toLowerCase().includes(searchVal)) {
+        matchSearch = true;
+      } else if (t.active_node && t.active_node.toLowerCase().includes(searchVal)) {
+        matchSearch = true;
+      } else if (Array.isArray(t.nodes) && t.nodes.some(n => n && String(n).toLowerCase().includes(searchVal))) {
+        matchSearch = true;
+      } else if (Array.isArray(t.completed_nodes) && t.completed_nodes.some(n => n && String(n).toLowerCase().includes(searchVal))) {
+        matchSearch = true;
+      }
+    }
+    const matchDomain = selectedDomain === 'all' || (t.domain && t.domain.toLowerCase() === selectedDomain.toLowerCase());
+    const matchStatus = (activeSavedTopicsStatusFilter === 'all' || (t.status || 'in_progress') === activeSavedTopicsStatusFilter);
+    return matchSearch && matchDomain && matchStatus;
+  });
+
+  if (filtered.length === 0) {
+    modalList.innerHTML = '<div class="p-8 text-center text-xs text-zinc-500 font-mono">[NO MATCHING TOPIC VAULTS FOUND]</div>';
+    return;
   }
+
+  modalList.innerHTML = filtered.map(t => {
+    const progressPct = t.total_nodes > 0 ? Math.round((t.mastered_nodes / t.total_nodes) * 100) : 0;
+    const domainLabel = (t.domain || 'general').toUpperCase();
+    const isCompleted = t.status === 'completed' || (t.total_nodes > 0 && t.mastered_nodes >= t.total_nodes);
+    const statusChip = isCompleted
+      ? `<span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-950/50 text-emerald-400 border border-emerald-500/30">COMPLETED</span>`
+      : `<span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-sky-950/50 text-sky-400 border border-sky-500/30">IN PROGRESS</span>`;
+    return `
+      <div class="p-4 rounded-xl bg-[#16171b] border border-[#27272a] hover:border-zinc-700 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 mb-1.5 flex-wrap">
+            <h3 class="text-sm font-semibold text-zinc-100 truncate">${escapeHtml(t.name)}</h3>
+            <span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#1f2228] text-zinc-400 border border-[#27272a]">${escapeHtml(domainLabel)}</span>
+            ${statusChip}
+            <span class="text-[10px] font-mono text-zinc-500">${t.mastered_nodes} / ${t.total_nodes} Mastered (${progressPct}%)</span>
+          </div>
+          <!-- Progress Bar -->
+          <div class="w-full bg-[#1f2228] rounded-full h-1.5 overflow-hidden mb-2">
+            <div class="bg-emerald-500 h-1.5 rounded-full transition-all duration-300" style="width: ${progressPct}%"></div>
+          </div>
+          <div class="text-[11px] text-zinc-400 font-mono flex items-center gap-3">
+            <span>Active: <span class="text-sky-400">${escapeHtml(t.active_node || 'Completed')}</span></span>
+          </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="flex items-center gap-2 shrink-0">
+          <button onclick="readTopicStatic('${escapeHtml(t.name)}')" class="px-2.5 py-1.5 rounded-lg border border-[#27272a] hover:border-zinc-600 bg-[#121316] hover:bg-[#1a1b20] text-xs font-mono text-zinc-300 hover:text-white transition-colors cursor-pointer" title="Read Vault Notes (Zero-Token Static Mode)">
+            Read
+          </button>
+          <button onclick="selectSavedTopic('${escapeHtml(t.name)}')" class="px-3 py-1.5 rounded-lg border border-sky-500/40 hover:border-sky-400 bg-sky-500/10 hover:bg-sky-500/20 text-xs font-mono text-sky-400 hover:text-sky-300 transition-colors font-semibold cursor-pointer" title="Resume Teaching Loop">
+            Resume
+          </button>
+          <button onclick="deleteSavedTopic('${escapeHtml(t.name)}')" class="p-1.5 rounded-lg border border-[#27272a] hover:border-rose-900/60 bg-[#121316] hover:bg-rose-950/20 text-xs text-zinc-500 hover:text-rose-400 transition-colors cursor-pointer" title="Delete Topic Vault">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+          </button>
+        </div>
+      </div>
+    `;
+  }).join('');
 }
 
-function closeSavedTopicsDropdown() {
-  const menu = document.getElementById('saved-topics-menu');
-  const chevron = document.getElementById('saved-topics-chevron');
-  if (menu && !menu.classList.contains('hidden')) {
-    menu.classList.add('hidden');
-    if (chevron) chevron.classList.remove('rotate-180');
-  }
-}
-
-document.addEventListener('click', (e) => {
-  const container = document.getElementById('saved-topics-dropdown-container');
-  if (container && !container.contains(e.target)) {
-    closeSavedTopicsDropdown();
-  }
+// Search and filter listeners for saved topics modal
+document.addEventListener('DOMContentLoaded', () => {
+  const searchInput = document.getElementById('saved-topics-search');
+  const domainFilterSelect = document.getElementById('saved-topics-domain-filter');
+  if (searchInput) searchInput.addEventListener('input', renderSavedTopicsModalList);
+  if (domainFilterSelect) domainFilterSelect.addEventListener('change', renderSavedTopicsModalList);
 });
+
+// Static Zero-Token Reading Mode
+async function readTopicStatic(topicName) {
+  closeSavedTopicsModal();
+  try {
+    const resp = await fetch('/api/topics/load', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic: topicName, mode: "read" })
+    });
+    if (!resp.ok) throw new Error(`Failed to load topic notes: ${resp.statusText}`);
+
+    // Set isStudyViewExplicitlyActive = true
+    isStudyViewExplicitlyActive = true;
+
+    // Update UI: unhide #workspace-study, hide #workspace-idle
+    const studyEl = document.getElementById('workspace-study');
+    const idleEl = document.getElementById('workspace-idle');
+    if (studyEl && idleEl) {
+      idleEl.classList.add('hidden');
+      studyEl.classList.remove('hidden');
+    }
+
+    // Reset flags: currentRoadmapMode = null; currentNotesMode = null; currentRoadmapTransform = null;
+    currentRoadmapMode = null;
+    currentNotesMode = null;
+    currentRoadmapTransform = null;
+
+    // Call await pollState()
+    await pollState();
+
+    // Mount a dedicated Read-Only / Standby Card in the assessment panel:
+    const quizContainer = document.getElementById('quiz-container');
+    const pill = document.getElementById('quiz-status-pill');
+    if (pill) {
+      pill.textContent = '[READING]';
+      pill.className = 'text-[10px] font-mono px-2 py-0.5 rounded bg-sky-950/40 text-sky-400 border border-sky-500/30';
+    }
+    if (quizContainer) {
+      quizContainer.innerHTML = `
+        <div class="p-6 rounded-xl bg-slate-900/60 border border-slate-800 text-center space-y-2 font-mono">
+          <div class="text-xs font-bold text-sky-400">[READING MODE]</div>
+          <p class="text-xs text-zinc-400 font-sans">Browsing topic notes in zero-token read mode. Click any node on the roadmap to inspect its contents.</p>
+        </div>
+      `;
+    }
+
+    updateBranchJumperHUD();
+    showToast(`Loaded ${topicName} in static reading mode.`);
+  } catch (err) {
+    showToast(`Error reading topic: ${err.message}`, 'error');
+  }
+}
+
+window.readTopicStatic = readTopicStatic;
 
 // Idle Center Inline Topic Picker
 function openIdleTopicPicker() {
@@ -2033,6 +2426,7 @@ async function selectSavedTopic(topicName) {
     if (phaseDot) phaseDot.className = 'w-2 h-2 rounded-full bg-indigo-400 shadow-sm shadow-indigo-400';
 
     // Instantly reload state, roadmap and notes panels
+    currentRoadmapTransform = null;
     await pollState();
 
     // Copy .resume command to clipboard
@@ -2674,14 +3068,28 @@ function initForceGraph() {
           blur = 8 / globalScale;
         }
 
-        // Alpha dimming when another node is hovered/focused
-        const nodeAlpha = (focus && !isFocus) ? 0.18 : 1.0;
+        let selectedGraphDomain = window.selectedGraphDomain || 'all';
+        const nodeDomain = (node.domain || (node.topics && node.topics[0]) || 'general').toLowerCase();
+        const matchesDomain = (selectedGraphDomain === 'all' || nodeDomain === selectedGraphDomain);
+
+        // Alpha dimming when filtered by domain or when another node is hovered/focused
+        let nodeAlpha = 1.0;
+        let isDimmedByFilter = !matchesDomain;
+
+        if (isDimmedByFilter) {
+          nodeAlpha = 0.15;
+          coreColor = '#334155';
+          glowColor = 'transparent';
+          blur = 0;
+        } else if (focus && !isFocus && !isNeighbor) {
+          nodeAlpha = 0.18;
+        }
 
         ctx.save();
         ctx.globalAlpha = nodeAlpha;
 
         // Pass 1: Outer soft ambient aura for mastered / active nodes
-        if (blur > 0) {
+        if (blur > 0 && !isDimmedByFilter) {
           ctx.beginPath();
           ctx.arc(node.x, node.y, baseR + (node.__depth === 0 ? 3.5 : 2.5) / globalScale, 0, 2 * Math.PI);
           ctx.fillStyle = glowColor;
@@ -2959,6 +3367,21 @@ async function openGraphModal() {
         countEl.innerText = `${nodes.length} concept${nodes.length === 1 ? '' : 's'}`;
       }
 
+      // Build Domain Filter Chips for Knowledge Graph
+      const chipsContainer = document.getElementById('graph-domain-chips');
+      if (chipsContainer) {
+        const domains = new Set();
+        nodes.forEach(n => {
+          const d = (n.domain || (n.topics && n.topics[0]) || 'general').toLowerCase();
+          domains.add(d);
+        });
+        chipsContainer.innerHTML = Array.from(domains).sort().map(d => `
+          <button id="filter-domain-${escapeHtml(d)}" onclick="setGraphDomainFilter('${escapeHtml(d)}')" class="px-2.5 py-1 rounded-lg text-[11px] font-mono transition-all text-zinc-400 hover:text-white hover:bg-white/5 border border-transparent">
+            ${escapeHtml(d.toUpperCase())}
+          </button>
+        `).join('');
+      }
+
       if (knowledgeGraphInstance) {
         knowledgeGraphInstance.graphData(graphDataCache);
         knowledgeGraphInstance.resumeAnimation();
@@ -2975,6 +3398,35 @@ async function openGraphModal() {
   }
   setupGraphNavControls();
 }
+
+function setGraphDomainFilter(domain) {
+  window.selectedGraphDomain = domain.toLowerCase();
+
+  // Update active chip classes
+  const allBtn = document.getElementById('filter-domain-all');
+  if (allBtn) {
+    if (domain === 'all') {
+      allBtn.className = 'px-2.5 py-1 rounded-lg text-[11px] font-mono transition-all bg-sky-500/20 text-sky-300 border border-sky-500/30';
+    } else {
+      allBtn.className = 'px-2.5 py-1 rounded-lg text-[11px] font-mono transition-all text-zinc-400 hover:text-white hover:bg-white/5 border border-transparent';
+    }
+  }
+
+  const chipsContainer = document.getElementById('graph-domain-chips');
+  if (chipsContainer) {
+    const btns = chipsContainer.querySelectorAll('button');
+    btns.forEach(btn => {
+      const btnDomain = btn.id.replace('filter-domain-', '').toLowerCase();
+      if (btnDomain === domain.toLowerCase()) {
+        btn.className = 'px-2.5 py-1 rounded-lg text-[11px] font-mono transition-all bg-sky-500/20 text-sky-300 border border-sky-500/30';
+      } else {
+        btn.className = 'px-2.5 py-1 rounded-lg text-[11px] font-mono transition-all text-zinc-400 hover:text-white hover:bg-white/5 border border-transparent';
+      }
+    });
+  }
+}
+
+window.setGraphDomainFilter = setGraphDomainFilter;
 
 function closeGraphModal() {
   const modal = document.getElementById('graph-modal');
@@ -3128,7 +3580,39 @@ function setupGraphNavControls() {
 }
 
 document.addEventListener('keydown', e => {
+  // Cmd / Ctrl + K -> Open Saved Topics Modal
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    const savedModal = document.getElementById('saved-topics-modal');
+    if (savedModal && !savedModal.classList.contains('hidden')) {
+      closeSavedTopicsModal();
+    } else {
+      openSavedTopicsModal();
+    }
+    return;
+  }
+
+  // Hotkey note traversal (when not typing in an input/textarea)
+  const isInput = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable;
+  if (!isInput && (e.key === '[' || e.key === 'ArrowLeft')) {
+    if (typeof navigatePreviousNote === 'function') navigatePreviousNote();
+  } else if (!isInput && (e.key === ']' || e.key === 'ArrowRight')) {
+    if (typeof navigateNextNote === 'function') navigateNextNote();
+  } else if (!isInput && e.key >= '1' && e.key <= '9') {
+    const branchIdx = parseInt(e.key, 10) - 1;
+    if (typeof activeBranches !== 'undefined' && activeBranches && activeBranches[branchIdx]) {
+      e.preventDefault();
+      const target = activeBranches[branchIdx];
+      loadNodeReference(target.id, target.title || target.label || target.id);
+    }
+  }
+
   if (e.key === 'Escape') {
+    const savedModal = document.getElementById('saved-topics-modal');
+    if (savedModal && !savedModal.classList.contains('hidden')) {
+      closeSavedTopicsModal();
+      return;
+    }
     const diagramModal = document.getElementById('diagram-modal');
     if (diagramModal && !diagramModal.classList.contains('hidden')) {
       closeDiagramModal();

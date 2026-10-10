@@ -18,12 +18,7 @@ from pathlib import Path
 
 WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
 STATE_DIR = WORKSPACE_ROOT / "state"
-QUIZ_FILE = STATE_DIR / "quiz.json"
-ANSWER_FILE = STATE_DIR / "answer.json"
-TOPIC_FILE = STATE_DIR / "topic.json"
-CURRICULUM_FILE = STATE_DIR / "curriculum.json"
-ROADMAP_FILE = STATE_DIR / "roadmap.mmd"
-VERIFICATION_FILE = STATE_DIR / "verification.json"
+ACTIVE_SESSION_FILE = STATE_DIR / "active_session.json"
 CACHE_DIR = STATE_DIR / "cache"
 
 sys.path.insert(0, str(WORKSPACE_ROOT))
@@ -32,8 +27,19 @@ from server import app, submit_batch_quiz, BatchQuizSubmitRequest
 
 def test_batch_grading():
     print("[TEST 1/4] Testing Batch Quiz Submission & Instant Grading in Python...")
+    topic_name = "Test Batch Topic"
+    topic_dir = WORKSPACE_ROOT / "notes" / topic_name
+    sess_dir = topic_dir / ".session"
+    sess_dir.mkdir(parents=True, exist_ok=True)
+    quiz_file = sess_dir / "quiz.json"
+    answer_file = sess_dir / "answer.json"
 
-    # Initialize a 3-question quiz in state/quiz.json
+    # Set active_session.json
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with open(ACTIVE_SESSION_FILE, "w", encoding="utf-8") as f:
+        json.dump({"active_topic": topic_name, "phase": "teaching"}, f, indent=2)
+
+    # Initialize a 3-question quiz in notes/Test Batch Topic/.session/quiz.json
     quiz_data = {
         "_shuffled": True,
         "questions": [
@@ -57,105 +63,92 @@ def test_batch_grading():
             }
         ]
     }
-    QUIZ_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(QUIZ_FILE, "w", encoding="utf-8") as f:
+    with open(quiz_file, "w", encoding="utf-8") as f:
         json.dump(quiz_data, f, indent=2)
 
-    # Submit batch assessment via direct Python function call
     req = BatchQuizSubmitRequest(
         answers=[1, 0, 3],
         timestamp="2026-10-01T20:00:00Z"
     )
-    data = submit_batch_quiz(req)
-    assert data.get("status") == "ok", f"Expected ok, got {data}"
-    eval_res = data.get("evaluation", {})
-    assert eval_res.get("batch") is True, "Expected batch: True"
-    assert eval_res.get("correct_count") == 3, f"Expected 3 correct, got {eval_res.get('correct_count')}"
-    assert eval_res.get("total") == 3, "Expected 3 total"
-    assert eval_res.get("passed") is True, "Expected passed: True"
-    assert eval_res.get("score") == 1.0, "Expected score: 1.0"
+    try:
+        data = submit_batch_quiz(req)
+        assert data.get("status") == "ok", f"Expected ok, got {data}"
+        eval_res = data.get("evaluation", {})
+        assert eval_res.get("batch") is True, "Expected batch: True"
+        assert eval_res.get("correct_count") == 3, f"Expected 3 correct, got {eval_res.get('correct_count')}"
+        assert eval_res.get("total") == 3, "Expected 3 total"
+        assert eval_res.get("passed") is True, "Expected passed: True"
+        assert eval_res.get("score") == 1.0, "Expected score: 1.0"
 
-    # Verify atomic write to state/answer.json
-    assert ANSWER_FILE.exists(), "Expected state/answer.json to exist"
-    with open(ANSWER_FILE, "r", encoding="utf-8") as f:
-        disk_answer = json.load(f)
-    assert disk_answer.get("passed") is True
-    assert disk_answer.get("correct_count") == 3
+        # Verify atomic write to notes/Test Batch Topic/.session/answer.json
+        assert answer_file.exists(), "Expected topic .session/answer.json to exist"
+        with open(answer_file, "r", encoding="utf-8") as f:
+            disk_answer = json.load(f)
+        assert disk_answer.get("passed") is True
+        assert disk_answer.get("correct_count") == 3
 
-    print("[PASS] Batch quiz grading and atomic answer writing verified successfully.")
+        print("[PASS] Batch quiz grading and atomic answer writing verified successfully.")
+    finally:
+        import shutil
+        shutil.rmtree(topic_dir, ignore_errors=True)
 
 
 def test_advance_node():
     print("[TEST 2/4] Testing Programmatic Node Advancement via bridge.py advance-node...")
-    # Setup test curriculum and topic state
-    test_curriculum = {
-        "topic": "Manufacturing Strategy",
+    topic_name = "Test Advance Topic"
+    topic_dir = WORKSPACE_ROOT / "notes" / topic_name
+    sess_dir = topic_dir / ".session"
+    sess_dir.mkdir(parents=True, exist_ok=True)
+    manifest_file = topic_dir / "manifest.json"
+    answer_file = sess_dir / "answer.json"
+
+    # Setup manifest in notes/<topic>/manifest.json
+    test_manifest = {
+        "topic": topic_name,
+        "domain": "operations",
         "nodes": [
             {
                 "id": "node-1-outputs",
-                "label": "1. Manufacturing Outputs & Competitive Dimensions",
+                "title": "Manufacturing Outputs & Competitive Dimensions",
                 "status": "active",
-                "origin": "curriculum",
-                "node_number": 1
+                "origin": "curriculum"
             },
             {
                 "id": "node-2-levers",
-                "label": "2. Manufacturing Decision Levers: Structural vs Infrastructural",
+                "title": "Manufacturing Decision Levers: Structural vs Infrastructural",
                 "status": "planned",
-                "origin": "curriculum",
-                "node_number": 2
+                "origin": "curriculum"
             },
             {
                 "id": "node-3-frontier",
-                "label": "3. Manufacturing Capability Frontier & Sandcone Model",
+                "title": "Manufacturing Capability Frontier & Sandcone Model",
                 "status": "planned",
-                "origin": "curriculum",
-                "node_number": 3
+                "origin": "curriculum"
             }
-        ]
+        ],
+        "edges": []
     }
-    with open(CURRICULUM_FILE, "w", encoding="utf-8") as f:
-        json.dump(test_curriculum, f, indent=2)
+    with open(manifest_file, "w", encoding="utf-8") as f:
+        json.dump(test_manifest, f, indent=2)
 
-    test_topic = {
-        "topic": "Manufacturing Strategy",
-        "active_node_id": "node-1-outputs",
-        "active_node": "1. Manufacturing Outputs & Competitive Dimensions",
-        "phase": "teaching"
-    }
-    with open(TOPIC_FILE, "w", encoding="utf-8") as f:
-        json.dump(test_topic, f, indent=2)
+    # Create note 1 in vault
+    note1_file = topic_dir / "node-1-outputs.md"
+    note1_file.write_text(
+        "---\nid: node-1-outputs\ntitle: Manufacturing Outputs & Competitive Dimensions\nstatus: in_progress\n---\n\n# Node 1",
+        encoding="utf-8"
+    )
 
-    # Pre-cache verification payload for node 2
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cache_file = CACHE_DIR / "verification_node-2-levers.json"
-    cache_payload = {
-        "concept": "Manufacturing Decision Levers: Structural vs Infrastructural",
-        "status": "[VERIFIED]",
-        "source_type": "local_textbook",
-        "document_title": "Manufacturing Strategy (Miltenburg)",
-        "page_range": "Pages 65-85",
-        "citation": "Manufacturing Strategy, Pages 65-85",
-        "canonical_definition": "Pre-cached audit definition.",
-        "trade_offs_and_boundaries": "Capital expenditure vs organizational alignment.",
-        "misconceptions": ["Believing structural changes alone suffice."]
-    }
-    with open(cache_file, "w", encoding="utf-8") as f:
-        json.dump(cache_payload, f, indent=2)
+    # Setup active session in state/active_session.json
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with open(ACTIVE_SESSION_FILE, "w", encoding="utf-8") as f:
+        json.dump({
+            "active_topic": topic_name,
+            "active_node_id": "node-1-outputs",
+            "phase": "teaching"
+        }, f, indent=2)
 
-    # Write initial roadmap.mmd
-    test_roadmap = """graph TD
-  classDef completed stroke:#22c55e,stroke-width:2px;
-  classDef active stroke:#38bdf8,stroke-width:3px;
-  classDef pending stroke:#475569,stroke-width:1px;
-  N1["1. Manufacturing Outputs & Competitive Dimensions"]:::active --> N2["2. Manufacturing Decision Levers: Structural vs Infrastructural"]:::pending
-  N2 --> N3["3. Manufacturing Capability Frontier & Sandcone Model"]:::pending
-"""
-    with open(ROADMAP_FILE, "w", encoding="utf-8") as f:
-        f.write(test_roadmap)
-
-    # Ensure answer.json exists with passing evaluation for advance-node
-    with open(ANSWER_FILE, "w", encoding="utf-8") as f:
+    # Setup passing answer
+    with open(answer_file, "w", encoding="utf-8") as f:
         json.dump({
             "node_id": "node-1-outputs",
             "batch": True,
@@ -166,48 +159,35 @@ def test_advance_node():
         }, f, indent=2)
 
     # Execute bridge.py advance-node
-    cmd = [sys.executable, str(WORKSPACE_ROOT / "bridge.py"), "advance-node"]
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=str(WORKSPACE_ROOT))
-    assert proc.returncode == 0, f"advance-node failed with code {proc.returncode}: {proc.stderr}"
-    print(f"advance-node output: {proc.stdout.strip()}")
+    try:
+        cmd = [sys.executable, str(WORKSPACE_ROOT / "bridge.py"), "advance-node"]
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=str(WORKSPACE_ROOT))
+        assert proc.returncode == 0, f"advance-node failed with code {proc.returncode}: {proc.stderr}"
 
-    # 1. Validate that Node 1 is now completed in curriculum.json
-    with open(CURRICULUM_FILE, "r", encoding="utf-8") as f:
-        updated_curriculum = json.load(f)
-    n1 = updated_curriculum["nodes"][0]
-    n2 = updated_curriculum["nodes"][1]
-    assert n1["status"] == "completed", f"Expected Node 1 completed, got {n1['status']}"
-    assert n2["status"] == "active", f"Expected Node 2 active, got {n2['status']}"
+        # 1. Validate that Node 1 is now completed/mastered in manifest.json
+        with open(manifest_file, "r", encoding="utf-8") as f:
+            updated_manifest = json.load(f)
+        n1 = updated_manifest["nodes"][0]
+        n2 = updated_manifest["nodes"][1]
+        assert n1["status"] in ("mastered", "completed"), f"Expected Node 1 completed/mastered, got {n1['status']}"
+        assert n2["status"] == "active", f"Expected Node 2 active, got {n2['status']}"
 
-    # 2. Validate topic.json active_node_id
-    with open(TOPIC_FILE, "r", encoding="utf-8") as f:
-        updated_topic = json.load(f)
-    assert updated_topic.get("active_node_id") == "node-2-levers", f"Expected active_node_id node-2-levers, got {updated_topic.get('active_node_id')}"
+        # 2. Validate active_session.json active_node_id
+        with open(ACTIVE_SESSION_FILE, "r", encoding="utf-8") as f:
+            updated_sess = json.load(f)
+        assert updated_sess.get("active_node_id") == "node-2-levers", f"Expected active_node_id node-2-levers, got {updated_sess.get('active_node_id')}"
 
-    # 3. Validate cache swap
-    assert not cache_file.exists(), "Expected cache file to be removed after promotion"
-    assert VERIFICATION_FILE.exists(), "Expected state/verification.json to exist"
-    with open(VERIFICATION_FILE, "r", encoding="utf-8") as f:
-        promoted_v = json.load(f)
-    assert promoted_v.get("document_title") == "Manufacturing Strategy (Miltenburg)"
+        # 3. Validate note frontmatter was promoted
+        note1_content = note1_file.read_text(encoding="utf-8")
+        assert 'status: "mastered"' in note1_content or "status: mastered" in note1_content
 
-    # 4. Validate Roadmap CSS classes
-    with open(ROADMAP_FILE, "r", encoding="utf-8") as f:
-        roadmap_content = f.read()
-    assert "classDef completed stroke:#22c55e,stroke-width:2px;" in roadmap_content
-    assert "classDef active stroke:#38bdf8,stroke-width:3px;" in roadmap_content
-    assert "classDef pending stroke:#475569,stroke-width:1px;" in roadmap_content
-    assert 'N1["1. Manufacturing Outputs & Competitive Dimensions"]:::completed' in roadmap_content
-    assert 'N2["2. Manufacturing Decision Levers: Structural vs Infrastructural"]:::active' in roadmap_content
-    assert 'N3["3. Manufacturing Capability Frontier & Sandcone Model"]:::pending' in roadmap_content
-    # Confirm active node does NOT share green completed styling
-    assert ':::completed' not in roadmap_content.split('N2[')[1].split('\n')[0]
+        # 4. Validate transient .session/ files are cleaned up
+        assert not answer_file.exists(), "Expected answer.json to be cleaned up"
 
-    # 5. Validate old quiz.json and answer.json are deleted
-    assert not QUIZ_FILE.exists(), "Expected quiz.json to be deleted"
-    assert not ANSWER_FILE.exists(), "Expected answer.json to be deleted"
-
-    print("[PASS] Programmatic advance-node, cache swap, roadmap styling, and buffer cleanup verified.")
+        print("[PASS] Programmatic advance-node, manifest update, frontmatter promotion, and buffer cleanup verified.")
+    finally:
+        import shutil
+        shutil.rmtree(topic_dir, ignore_errors=True)
 
 
 def test_resume_protocol_agents_md():

@@ -102,33 +102,13 @@
         <span>Knowledge Graph</span>
       </button>
 
-      <!-- Saved Topics Dropdown -->
-      <div class="relative inline-block text-left" id="saved-topics-dropdown-container">
-        <button id="btn-saved-topics" onclick="toggleSavedTopicsDropdown()" class="text-xs font-mono text-zinc-300 hover:text-white border border-[#27272a] hover:border-[#3f3f46] bg-[#16171b] hover:bg-[#1f2228] px-2.5 py-1.5 rounded-md transition-all flex items-center gap-2" title="Browse Saved Topics">
-          <span>Saved Topics</span>
-          <span id="saved-topics-count" class="hidden px-1.5 py-0.2 text-[10px] rounded bg-zinc-800 text-zinc-300 font-mono font-semibold">0</span>
-          <svg class="w-3 h-3 text-zinc-400 transition-transform duration-200" id="saved-topics-chevron" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
-          </svg>
-        </button>
-
-        <!-- Dropdown Menu -->
-        <div id="saved-topics-menu" class="hidden absolute right-0 mt-2 w-80 rounded-md bg-[#121316] border border-[#27272a] shadow-2xl z-50 overflow-hidden backdrop-blur-xl">
-          <div class="p-3 border-b border-[#27272a] bg-[#16171b] flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <span class="text-xs font-semibold text-zinc-200 font-mono">SAVED SUBJECTS</span>
-              <span class="text-[10px] text-zinc-500">Click to resume</span>
-            </div>
-            <button onclick="fetchSavedTopics()" class="text-zinc-400 hover:text-zinc-200 p-1 rounded transition-colors text-[10px] font-mono" title="Refresh list">
-              REFRESH
-            </button>
-          </div>
-          <div id="saved-topics-list" class="topics-list-container max-h-72 overflow-y-auto p-2 space-y-1">
-            <!-- Dynamic Topics Injected Here -->
-            <div class="p-4 text-center text-xs text-zinc-500 font-mono">Loading topics...</div>
-          </div>
-        </div>
-      </div>
+      <!-- Saved Topics Modal Trigger -->
+      <button id="btn-saved-topics" onclick="openSavedTopicsModal()" class="text-xs font-mono text-zinc-300 hover:text-white border border-[#27272a] hover:border-[#3f3f46] bg-[#16171b] hover:bg-[#1f2228] px-2.5 py-1.5 rounded-md transition-all flex items-center gap-2" title="Browse Saved Topics (Cmd/Ctrl + K)">
+        <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+        <span>Saved Topics</span>
+        <span id="saved-topics-count" class="hidden px-1.5 py-0.2 text-[10px] rounded bg-zinc-800 text-zinc-300 font-mono font-semibold">0</span>
+        <kbd class="hidden md:inline text-[9px] font-mono text-zinc-500 bg-[#121316] px-1 py-0.5 rounded border border-[#27272a]">⌘K</kbd>
+      </button>
 
       <!-- Topic Badge -->
       <div class="flex items-center space-x-2 bg-[#16171b] border border-[#27272a] px-2.5 py-1.5 rounded-md text-xs">
@@ -193,6 +173,15 @@
           <div id="dag-container" class="w-full h-full flex justify-center items-center">
             <!-- Mermaid DAG dynamically injected here -->
           </div>
+
+          <!-- HUD Branch Jumper -->
+          <div id="branch-jumper-hud" class="hidden absolute bottom-3 left-3 z-20 p-2 rounded-xl bg-[#121316]/90 backdrop-blur-md border border-white/10 shadow-2xl font-mono text-xs space-y-1 max-w-[220px]">
+            <div class="text-[9px] text-zinc-400 uppercase tracking-wider flex items-center justify-between">
+              <span>BRANCHES</span>
+              <span class="text-zinc-600">[HOTKEYS 1-9]</span>
+            </div>
+            <div id="branch-jumper-links" class="flex flex-col gap-1"></div>
+          </div>
         </div>
       </section>
 
@@ -200,7 +189,7 @@
       <div id="roadmap-resizer" class="roadmap-resizer hidden lg:block" title="Drag to resize Roadmap panel"></div>
 
       <!-- Center Column: Verified Lesson Notes (Panel 2) -->
-      <section id="panel-notes" class="flex-1 h-full overflow-y-auto min-w-0 flex flex-col bg-[#121316] border border-[#27272a] rounded-md">
+      <section id="panel-notes" class="relative flex-1 h-full overflow-y-auto min-w-0 flex flex-col bg-[#121316] border border-[#27272a] rounded-md">
         <!-- Reference Mode Sticky Banner -->
         <div id="reference-mode-banner" class="hidden p-2.5 px-4 bg-sky-950/40 border-b border-sky-800/60 flex items-center justify-between text-xs shrink-0 sticky top-0 z-20 backdrop-blur-sm">
           <div class="flex items-center gap-2">
@@ -530,6 +519,55 @@
     </div>
   </div>
 
+  <!-- Saved Topics Modal (Cmd + K) -->
+  <div id="saved-topics-modal" class="modal-overlay hidden fixed inset-0 z-50 flex items-center justify-center bg-[#09090b]/80 backdrop-blur-md transition-opacity duration-200 pointer-events-auto p-4">
+    <div class="w-full max-w-2xl bg-[#121316] border border-[#27272a] rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+      <!-- Modal Header -->
+      <div class="h-14 border-b border-[#27272a] bg-[#16171b] px-5 flex items-center justify-between shrink-0">
+        <div class="flex items-center gap-2.5">
+          <svg class="w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+          <span class="text-xs font-mono font-bold tracking-wider text-zinc-200">SAVED TOPIC VAULTS</span>
+          <span id="saved-modal-count-badge" class="text-[10px] font-mono px-2 py-0.5 rounded bg-[#18181b] text-sky-400 border border-[#27272a]">0 Topics</span>
+        </div>
+        <button onclick="closeSavedTopicsModal()" class="text-xs font-mono text-zinc-400 hover:text-white border border-[#27272a] hover:border-[#3f3f46] bg-[#18181b] hover:bg-[#27272a] px-2 py-1 rounded transition-all" title="Close (Esc)">
+          ESC
+        </button>
+      </div>
+
+      <!-- Search & Filter Controls -->
+      <div class="p-4 border-b border-[#27272a] bg-[#121316]/50 flex flex-col gap-2">
+        <div class="relative w-full">
+          <input type="text" id="saved-topics-search" placeholder="Search topic vaults..." class="w-full bg-[#16171b] border border-[#27272a] focus:border-sky-500 rounded-lg px-3 py-2 pl-9 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none transition-all font-mono">
+          <svg class="w-4 h-4 text-zinc-500 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+          </svg>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-between gap-3 pt-2">
+          <!-- Status Filter Chips -->
+          <div id="saved-topics-status-chips" class="flex items-center gap-1.5">
+            <button type="button" onclick="setSavedTopicsStatusFilter('all')" id="status-chip-all" class="px-2.5 py-1 rounded-lg text-xs font-mono bg-sky-500/20 text-sky-300 border border-sky-500/30">ALL</button>
+            <button type="button" onclick="setSavedTopicsStatusFilter('in_progress')" id="status-chip-in_progress" class="px-2.5 py-1 rounded-lg text-xs font-mono text-zinc-400 hover:text-white border border-[#27272a] bg-[#16171b]">IN PROGRESS</button>
+            <button type="button" onclick="setSavedTopicsStatusFilter('completed')" id="status-chip-completed" class="px-2.5 py-1 rounded-lg text-xs font-mono text-zinc-400 hover:text-white border border-[#27272a] bg-[#16171b]">COMPLETED</button>
+          </div>
+
+          <!-- Domain Filter Dropdown & Refresh -->
+          <div class="flex items-center gap-2">
+            <select id="saved-topics-domain-filter" class="bg-[#16171b] border border-[#27272a] focus:border-sky-500 rounded-lg px-3 py-1.5 text-xs text-zinc-300 font-mono focus:outline-none">
+              <option value="all">All Domains</option>
+            </select>
+            <button onclick="loadSavedTopics()" class="text-xs font-mono text-zinc-400 hover:text-white px-2.5 py-1.5 rounded-lg border border-[#27272a] bg-[#16171b] hover:bg-[#1f2228] transition-colors">REFRESH</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Topics List -->
+      <div id="saved-topics-modal-list" class="flex-1 overflow-y-auto p-4 space-y-3">
+        <div class="p-8 text-center text-xs text-zinc-500 font-mono">Loading saved topics...</div>
+      </div>
+    </div>
+  </div>
+
   <!-- Obsidian 2D Global Knowledge Graph Modal -->
   <div id="graph-modal" class="modal-overlay hidden fixed inset-0 z-50 flex flex-col bg-[#09090b]/98 backdrop-blur-md transition-opacity duration-200 overflow-hidden pointer-events-auto">
     <!-- Top Utility Bar -->
@@ -575,7 +613,13 @@
 
     <!-- Split Container: Canvas on left, Resizer in middle, Drawer on right -->
     <div id="graph-split-container" class="graph-split-container">
-      <div id="graph-viewport" class="graph-viewport bg-[#09090b] pointer-events-auto">
+      <div id="graph-viewport" class="graph-viewport bg-[#09090b] pointer-events-auto relative">
+        <!-- Floating Glass Filter Bar (Zero-Physics Dimming) -->
+        <div id="graph-floating-filter-bar" class="absolute top-4 left-4 z-20 flex items-center gap-2 p-1.5 rounded-xl bg-[#121316]/80 backdrop-blur-xl border border-white/10 shadow-2xl">
+          <button id="filter-domain-all" onclick="setGraphDomainFilter('all')" class="px-2.5 py-1 rounded-lg text-[11px] font-mono transition-all bg-sky-500/20 text-sky-300 border border-sky-500/30">ALL</button>
+          <div id="graph-domain-chips" class="flex items-center gap-1.5"></div>
+        </div>
+
         <!-- Floating HUD Navigation Controls -->
         <div class="graph-nav-controls">
           <button id="btn-graph-zoom-in" title="Zoom In" class="nav-btn font-mono font-bold text-xs">+</button>

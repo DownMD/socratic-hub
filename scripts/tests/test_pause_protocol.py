@@ -25,7 +25,7 @@ WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(WORKSPACE_ROOT))
 
 import server
-from bridge import PAUSE_FLAG, STATE_DIR, TOPIC_FILE, QUIZ_FILE, ANSWER_FILE
+from bridge import PAUSE_FLAG, STATE_DIR, ACTIVE_SESSION_FILE
 
 
 def cleanup():
@@ -37,15 +37,15 @@ def test_api_pause():
     print("[TEST 1/5] Testing server.py /api/pause logic...")
     cleanup()
 
-    # Setup initial topic
-    initial_topic = {
-        "topic": "test-pause-topic",
+    # Setup initial active session
+    initial_sess = {
+        "active_topic": "test-pause-topic",
         "domain": "operations",
         "phase": "teaching"
     }
-    TOPIC_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(TOPIC_FILE, "w", encoding="utf-8") as f:
-        json.dump(initial_topic, f, indent=2)
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with open(ACTIVE_SESSION_FILE, "w", encoding="utf-8") as f:
+        json.dump(initial_sess, f, indent=2)
 
     # Call pause_session endpoint logic
     resp = server.pause_session()
@@ -58,10 +58,10 @@ def test_api_pause():
     assert flag_data.get("action") == "PAUSE", f"Invalid action in flag: {flag_data}"
     assert "timestamp" in flag_data, "Timestamp missing in pause flag!"
 
-    # Verify state/topic.json was updated to PAUSED
-    with open(TOPIC_FILE, "r", encoding="utf-8") as f:
-        updated_topic = json.load(f)
-    assert updated_topic.get("phase") == "PAUSED", f"Topic phase not PAUSED: {updated_topic}"
+    # Verify state/active_session.json was updated to PAUSED
+    with open(ACTIVE_SESSION_FILE, "r", encoding="utf-8") as f:
+        updated_sess = json.load(f)
+    assert updated_sess.get("phase") == "PAUSED", f"Session phase not PAUSED: {updated_sess}"
 
     # Verify /api/pause is registered in FastAPI routes
     routes = [r.path for r in server.app.routes]

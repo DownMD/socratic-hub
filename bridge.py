@@ -3,6 +3,7 @@ import json
 import os
 import random
 import re
+import shutil
 import sys
 import time
 import urllib.error
@@ -12,12 +13,8 @@ from typing import Any, Dict, List, Optional
 
 BASE_DIR = Path(__file__).resolve().parent
 STATE_DIR = BASE_DIR / "state"
-ANSWER_FILE = STATE_DIR / "answer.json"
-QUIZ_FILE = STATE_DIR / "quiz.json"
-CURRICULUM_FILE = STATE_DIR / "curriculum.json"
-TOPIC_FILE = STATE_DIR / "topic.json"
-ROADMAP_FILE = STATE_DIR / "roadmap.mmd"
-VERIFICATION_FILE = STATE_DIR / "verification.json"
+ACTIVE_SESSION_FILE = STATE_DIR / "active_session.json"
+KNOWLEDGE_GRAPH_FILE = STATE_DIR / "knowledge_graph.json"
 CACHE_DIR = STATE_DIR / "cache"
 PAUSE_FLAG = STATE_DIR / "pause.flag"
 
@@ -70,8 +67,28 @@ def safe_replace(src: Path, dst: Path, max_retries: int = 5) -> None:
             time.sleep(0.05 * pow(2, attempt))
 
 
+ACTIVE_SESSION_FILE = STATE_DIR / "active_session.json"
+
+
+def get_active_session() -> Dict[str, Any]:
+    if ACTIVE_SESSION_FILE.exists():
+        try:
+            return json.loads(ACTIVE_SESSION_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {"active_topic": None, "phase": "idle", "active_node_id": None}
+
+
+def save_active_session(sess: Dict[str, Any]) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = ACTIVE_SESSION_FILE.with_name(f"{ACTIVE_SESSION_FILE.name}.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(sess, f, indent=2, ensure_ascii=False)
+    safe_replace(tmp, ACTIVE_SESSION_FILE)
+
+
 def promote_vault_note_frontmatter(vault_note_path: Path) -> None:
-    """Updates YAML frontmatter atomically to status: 'mastered' and badge_label: 'Curriculum Mastered' while preserving body."""
+    """Updates YAML frontmatter atomically to status: 'mastered' and badge_label: 'Curriculum Mastered', appending Mastery Callout if missing."""
     try:
         content = vault_note_path.read_text(encoding="utf-8")
         fm_match = re.match(r'^---\s*\r?\n(.*?)\r?\n---\s*\r?\n(.*)$', content, re.DOTALL)
@@ -86,9 +103,22 @@ def promote_vault_note_frontmatter(vault_note_path: Path) -> None:
                 fm_text = re.sub(r'^badge_label:\s*.*$', 'badge_label: "Curriculum Mastered"', fm_text, flags=re.MULTILINE)
             else:
                 fm_text += '\nbadge_label: "Curriculum Mastered"'
+
+            # Ensure callout exists in body
+            if "[!success]" not in body:
+                callout = (
+                    "\n> [!success] Curriculum Mastery\n"
+                    "> Mastered through interactive Socratic instruction and verified via checkpoint quiz.\n\n"
+                )
+                body = callout + body.lstrip()
+
             new_content = f"---\n{fm_text.strip()}\n---\n{body}"
         else:
-            new_content = f'---\nstatus: "mastered"\nbadge_label: "Curriculum Mastered"\n---\n\n{content}'
+            callout = (
+                "> [!success] Curriculum Mastery\n"
+                "> Mastered through interactive Socratic instruction and verified via checkpoint quiz.\n\n"
+            )
+            new_content = f'---\nstatus: "mastered"\nbadge_label: "Curriculum Mastered"\n---\n\n{callout}{content}'
 
         tmp = vault_note_path.with_name(f"{vault_note_path.name}.tmp")
         tmp.write_text(new_content, encoding="utf-8")
@@ -123,14 +153,11 @@ def extract_node_section(lesson_content: str, node_id: Any, node_label: Any) -> 
 
 
 def check_stopped() -> bool:
-    if ANSWER_FILE.exists():
-        try:
-            with open(ANSWER_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, dict) and data.get("status") == "stopped":
-                    return True
-        except Exception:
-            pass
+    sess = get_active_session()
+    top = sess.get("active_topic")
+    ph = str(sess.get("phase", "idle")).lower()
+    if not top or top in ("Not Set", "not-set", "none", "") or ph in ("idle", "standby"):
+        return True
     return False
 
 
@@ -178,7 +205,7 @@ def shuffle_quiz(quiz_data: dict) -> dict:
     return quiz_data
 
 
-def save_quiz_atomic(quiz_data: dict, file_path: Path = QUIZ_FILE, shuffle: bool = True) -> dict:
+def save_quiz_atomic(quiz_data: dict, file_path: Optional[Path] = None, shuffle: bool = True) -> dict:
     """
     Atomically writes quiz data using temporary file rename (.tmp -> replace).
     If shuffle is True, shuffles options prior to saving to eliminate positional bias.
@@ -190,6 +217,15 @@ def save_quiz_atomic(quiz_data: dict, file_path: Path = QUIZ_FILE, shuffle: bool
             PAUSE_FLAG.unlink(missing_ok=True)
         except Exception:
             pass
+    if file_path is None:
+        sess = get_active_session()
+        top = sess.get("active_topic")
+        ph = sess.get("phase", "idle")
+        t_dir = get_topic_notes_dir(top) if top else None
+        if t_dir:
+            file_path = (t_dir / ".diagnostic" / "diagnostic_quiz.json") if ph == "probing" else (t_dir / ".session" / "quiz.json")
+        else:
+            file_path = CACHE_DIR / "quiz.json"
     file_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = file_path.with_name(f"{file_path.name}.tmp")
     with open(tmp_path, "w", encoding="utf-8") as f:
@@ -198,10 +234,19 @@ def save_quiz_atomic(quiz_data: dict, file_path: Path = QUIZ_FILE, shuffle: bool
     return quiz_data
 
 
-def shuffle_quiz_file(file_path: Path = QUIZ_FILE) -> dict:
+def shuffle_quiz_file(file_path: Optional[Path] = None) -> dict:
     """
     Reads existing quiz file, applies deterministic shuffle, and saves atomically.
     """
+    if file_path is None:
+        sess = get_active_session()
+        top = sess.get("active_topic")
+        ph = sess.get("phase", "idle")
+        t_dir = get_topic_notes_dir(top) if top else None
+        if t_dir:
+            file_path = (t_dir / ".diagnostic" / "diagnostic_quiz.json") if ph == "probing" else (t_dir / ".session" / "quiz.json")
+        else:
+            file_path = CACHE_DIR / "quiz.json"
     if not file_path.exists():
         return {}
     try:
@@ -213,10 +258,19 @@ def shuffle_quiz_file(file_path: Path = QUIZ_FILE) -> dict:
         return {}
 
 
-def check_and_shuffle_quiz(file_path: Path = QUIZ_FILE) -> None:
+def check_and_shuffle_quiz(file_path: Optional[Path] = None) -> None:
     """
     Checks if active quiz has un-shuffled options and shuffles them atomically.
     """
+    if file_path is None:
+        sess = get_active_session()
+        top = sess.get("active_topic")
+        ph = sess.get("phase", "idle")
+        t_dir = get_topic_notes_dir(top) if top else None
+        if t_dir:
+            file_path = (t_dir / ".diagnostic" / "diagnostic_quiz.json") if ph == "probing" else (t_dir / ".session" / "quiz.json")
+        else:
+            file_path = CACHE_DIR / "quiz.json"
     if file_path.exists():
         try:
             with open(file_path, "r", encoding="utf-8") as f:
@@ -241,30 +295,27 @@ def wait_for_answer(timeout_sec: float, endpoint: str = "http://127.0.0.1:8000/a
         print("[SESSION: PAUSED]")
         sys.exit(2)
 
-    # Check if stopped state is signaled before cleaning up
+    # Check if stopped state is signaled before polling
     if check_stopped():
         print(json.dumps({"status": "stopped"}))
         sys.exit(0)
 
-    # Delete any pre-existing state/answer.json on startup before polling
-    if ANSWER_FILE.exists():
-        try:
-            with open(ANSWER_FILE, "r", encoding="utf-8") as f:
-                prev_ans = json.load(f)
-            if isinstance(prev_ans, dict) and prev_ans.get("status") == "stopped":
-                print(json.dumps({"status": "stopped"}))
-                sys.exit(0)
-        except Exception:
-            pass
-        try:
-            ANSWER_FILE.unlink(missing_ok=True)
-        except Exception:
-            pass
+    sess = get_active_session()
+    raw_topic = sess.get("active_topic")
+    topic_vault_dir = get_topic_notes_dir(raw_topic) if raw_topic else None
+    phase = str(sess.get("phase", "idle")).lower()
 
-    # Ensure options are randomized before serving to eliminate positional bias
-    check_and_shuffle_quiz(QUIZ_FILE)
+    if topic_vault_dir:
+        quiz_file = (topic_vault_dir / ".diagnostic" / "diagnostic_quiz.json") if phase == "probing" else (topic_vault_dir / ".session" / "quiz.json")
+        if quiz_file.exists():
+            check_and_shuffle_quiz(quiz_file)
+        ans_target = (topic_vault_dir / ".diagnostic" / "baseline_passes.json") if phase == "probing" else (topic_vault_dir / ".session" / "answer.json")
+        if ans_target.exists():
+            try:
+                ans_target.unlink(missing_ok=True)
+            except Exception:
+                pass
 
-    # Snapshot baseline answer from HTTP endpoint to ignore pre-existing stale responses
     baseline_answer = None
     try:
         req = urllib.request.Request(endpoint, headers={"Accept": "application/json"})
@@ -287,25 +338,24 @@ def wait_for_answer(timeout_sec: float, endpoint: str = "http://127.0.0.1:8000/a
             print("[SESSION: PAUSED]")
             sys.exit(2)
 
-        # Check if stopped state is signaled in answer.json
+        # Check if stopped state is signaled
         if check_stopped():
             print(json.dumps({"status": "stopped"}))
             sys.exit(0)
 
-        # Direct state/answer.json detection for zero HTTP latency
-        if ANSWER_FILE.exists():
-            try:
-                content = ANSWER_FILE.read_text(encoding="utf-8").strip()
-                if content:
-                    ans_data = json.loads(content)
-                    if isinstance(ans_data, dict):
-                        if ans_data.get("status") == "stopped":
-                            print(json.dumps({"status": "stopped"}))
+        # Direct topic vault answer file detection for zero HTTP latency
+        if topic_vault_dir:
+            ans_target = (topic_vault_dir / ".diagnostic" / "baseline_passes.json") if phase == "probing" else (topic_vault_dir / ".session" / "answer.json")
+            if ans_target.exists():
+                try:
+                    content = ans_target.read_text(encoding="utf-8").strip()
+                    if content:
+                        ans_data = json.loads(content)
+                        if isinstance(ans_data, dict):
+                            print(json.dumps(ans_data))
                             sys.exit(0)
-                        print(json.dumps(ans_data))
-                        sys.exit(0)
-            except Exception:
-                pass
+                except Exception:
+                    pass
 
         try:
             req = urllib.request.Request(endpoint, headers={"Accept": "application/json"})
@@ -321,7 +371,6 @@ def wait_for_answer(timeout_sec: float, endpoint: str = "http://127.0.0.1:8000/a
                             print(json.dumps(latest_answer))
                             sys.exit(0)
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
-            # Server temporarily unreachable or busy, continue polling
             pass
 
         time.sleep(0.2)
@@ -331,7 +380,7 @@ def wait_for_answer(timeout_sec: float, endpoint: str = "http://127.0.0.1:8000/a
     sys.exit(1)
 
 
-def sync_verify_node(node: dict, ref_scope: Optional[dict] = None) -> None:
+def sync_verify_node(node: dict, ref_scope: Optional[dict] = None, topic_name: Optional[str] = None) -> None:
     label = node.get("title") or node.get("label", node.get("id", ""))
     clean_lbl = clean_label(label)
     locate_script = BASE_DIR / "scripts" / "locate_text.py"
@@ -394,11 +443,17 @@ def sync_verify_node(node: dict, ref_scope: Optional[dict] = None) -> None:
             ]
         }
 
-    VERIFICATION_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp_v = VERIFICATION_FILE.with_name(f"{VERIFICATION_FILE.name}.tmp")
+    sess = get_active_session()
+    raw_topic = topic_name or sess.get("active_topic") or "general"
+    topic_slug = to_canonical_id(raw_topic)
+    cache_topic_dir = CACHE_DIR / topic_slug
+    cache_topic_dir.mkdir(parents=True, exist_ok=True)
+    nid = node.get("id") or to_canonical_id(clean_lbl)
+    v_file = cache_topic_dir / f"verification_{nid}.json"
+    tmp_v = v_file.with_name(f"{v_file.name}.tmp")
     with open(tmp_v, "w", encoding="utf-8") as f:
         json.dump(audit_payload, f, indent=2, ensure_ascii=False)
-    safe_replace(tmp_v, VERIFICATION_FILE)
+    safe_replace(tmp_v, v_file)
 
 
 def update_roadmap_styling(roadmap_file: Path, nodes: List[dict], active_node_id: Optional[str]) -> None:
@@ -513,9 +568,8 @@ def update_roadmap_styling(roadmap_file: Path, nodes: List[dict], active_node_id
 
 def archive_completed_node_vault(completed_node: dict, topic_data: dict) -> None:
     """
-    Automatically extracts completed node markdown from notes/lesson_notes.md
-    and saves it to the topic vault archive (notes/<topic>/<node_slug>.md) with
-    Obsidian-compliant YAML frontmatter (<10ms execution).
+    Automatically creates topic vault note (notes/<topic>/<node_slug>.md) with
+    Obsidian-compliant YAML frontmatter if agent did not author it.
     """
     if not completed_node:
         return
@@ -528,30 +582,22 @@ def archive_completed_node_vault(completed_node: dict, topic_data: dict) -> None
 
         node_id = completed_node.get("id", "")
         node_label = completed_node.get("title") or completed_node.get("label") or node_id
-        # Raw canonical ID: matches notes/<topic>/<node_id>.md written by the agent
         node_slug = str(node_id).strip() or to_canonical_id(node_label)
         node_slug = re.sub(r'[\\/:*?"<>|]+', '-', node_slug)
         vault_note_path = topic_vault_dir / f"{node_slug}.md"
 
-        # Existing agent-authored note: promote frontmatter only, preserve body
         if vault_note_path.exists():
             promote_vault_note_frontmatter(vault_note_path)
             return
 
-        # Extract node section from notes/lesson_notes.md
-        lesson_notes_file = BASE_DIR / "notes" / "lesson_notes.md"
-        node_section = None
-        if lesson_notes_file.exists():
-            lesson_content = lesson_notes_file.read_text(encoding="utf-8")
-            node_section = extract_node_section(lesson_content, node_id, node_label)
-        # Audit metadata from state/verification.json if available
+        topic_slug = to_canonical_id(raw_topic or "general")
+        audit_file = CACHE_DIR / topic_slug / f"verification_{node_slug}.json"
         audit_data = {}
-        if VERIFICATION_FILE.exists():
+        if audit_file.exists():
             try:
-                with open(VERIFICATION_FILE, "r", encoding="utf-8") as vf:
-                    audit_data = json.load(vf)
+                audit_data = json.loads(audit_file.read_text(encoding="utf-8"))
             except Exception:
-                audit_data = {}
+                pass
 
         domain = topic_data.get("domain", "operations")
         clean_title = clean_label(node_label)
@@ -591,19 +637,10 @@ def archive_completed_node_vault(completed_node: dict, topic_data: dict) -> None
             "> Mastered through interactive Socratic instruction and verified via checkpoint quiz.",
             "",
             "---",
-            ""
+            "",
+            f"## Concept Overview\n\n{core_mech}\n"
         ])
-        frontmatter_header = "\n".join(fm_lines)
-
-        if node_section:
-            clean_body = re.sub(
-                r'^[ \t]*#{1,6}[ \t]*Node[ \t]*\d+[ \t]*[:.\-\u2013\u2014]?[^\n\r]*\n+', '',
-                node_section, count=1, flags=re.IGNORECASE
-            ).strip()
-            final_vault_content = frontmatter_header + clean_body + "\n"
-        else:
-            final_vault_content = frontmatter_header + f"\n## Concept Overview\n\n{core_mech}\n"
-
+        final_vault_content = "\n".join(fm_lines)
         tmp_vault = vault_note_path.with_name(f"{vault_note_path.name}.tmp")
         tmp_vault.write_text(final_vault_content, encoding="utf-8")
         safe_replace(tmp_vault, vault_note_path)
@@ -614,27 +651,31 @@ def archive_completed_node_vault(completed_node: dict, topic_data: dict) -> None
 def advance_node() -> None:
     """
     Executes programmatic node transition:
-    1. Validates that state/answer.json has a passing score.
-    2. Copies completed node markdown from notes/lesson_notes.md to vault archive.
-    3. Marks the current node as "completed" in state/curriculum.json.
-    4. Sets active_node_id in state/topic.json to the next sequential node.
-    5. Checks state/cache/verification_<next_node_id>.json:
-       - If present, atomically moves it to state/verification.json.
-       - If missing, triggers synchronous verification for that single node.
-    6. Updates CSS classes in state/roadmap.mmd (Completed = Green, Active = Cyan, Pending = Slate).
-    7. Emits lookahead status for N+2 and N+3.
-    8. Deletes old state/quiz.json and state/answer.json.
+    1. Validates that notes/<topic>/.session/answer.json has a passing score.
+    2. Updates target note notes/<topic>/<node_id>.md frontmatter directly to status: 'mastered'.
+    3. Updates manifest.json in the active topic vault.
+    4. Sets active_node_id in state/active_session.json to the next sequential node.
+    5. Checks verification cache in state/cache/<topic_slug>/; runs sync verification if missing.
+    6. Wipes transient .session/ files.
     """
-    # 1. Validate answer score
-    if not ANSWER_FILE.exists():
-        print(f"[TRANSITION] Error: {ANSWER_FILE} does not exist. Cannot advance node.", file=sys.stderr)
+    active_sess = get_active_session()
+    raw_topic = active_sess.get("active_topic")
+    topic_vault_dir = get_topic_notes_dir(raw_topic) if raw_topic else None
+
+    if not raw_topic or not topic_vault_dir or not topic_vault_dir.exists():
+        print(f"[TRANSITION] Error: No active topic vault found. Cannot advance node.", file=sys.stderr)
+        sys.exit(1)
+
+    # 1. Validate answer score from .session/answer.json
+    ans_file = topic_vault_dir / ".session" / "answer.json"
+    if not ans_file.exists():
+        print(f"[TRANSITION] Error: No answer file found at {ans_file}. Cannot advance node.", file=sys.stderr)
         sys.exit(1)
 
     try:
-        with open(ANSWER_FILE, "r", encoding="utf-8") as f:
-            ans_data = json.load(f)
+        ans_data = json.loads(ans_file.read_text(encoding="utf-8"))
     except Exception as e:
-        print(f"[TRANSITION] Error reading {ANSWER_FILE}: {e}", file=sys.stderr)
+        print(f"[TRANSITION] Error reading answer file: {e}", file=sys.stderr)
         sys.exit(1)
 
     is_passing = (
@@ -646,37 +687,29 @@ def advance_node() -> None:
     if not is_passing:
         print(f"[TRANSITION] Score is not passing: {ans_data}. Node cannot advance.", file=sys.stderr)
         try:
-            ANSWER_FILE.unlink(missing_ok=True)
+            ans_file.unlink(missing_ok=True)
         except OSError:
             pass
         sys.exit(1)
 
-    # 2. Mark current node as completed in curriculum
-    if not CURRICULUM_FILE.exists():
-        print(f"[TRANSITION] Error: {CURRICULUM_FILE} does not exist.", file=sys.stderr)
+    # 2. Load manifest from topic vault
+    manifest_file = topic_vault_dir / "manifest.json"
+    if not manifest_file.exists():
+        print(f"[TRANSITION] Error: Manifest file not found at {manifest_file}.", file=sys.stderr)
         sys.exit(1)
 
     try:
-        with open(CURRICULUM_FILE, "r", encoding="utf-8") as f:
-            curriculum = json.load(f)
+        manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
     except Exception as e:
-        print(f"[TRANSITION] Error reading {CURRICULUM_FILE}: {e}", file=sys.stderr)
+        print(f"[TRANSITION] Error loading manifest: {e}", file=sys.stderr)
         sys.exit(1)
 
-    nodes = curriculum.get("nodes", [])
+    nodes = manifest.get("nodes", [])
     if not nodes:
-        print(f"[TRANSITION] Error: No nodes in curriculum.", file=sys.stderr)
+        print(f"[TRANSITION] Error: No nodes found in manifest.", file=sys.stderr)
         sys.exit(1)
 
-    topic_data = {}
-    if TOPIC_FILE.exists():
-        try:
-            with open(TOPIC_FILE, "r", encoding="utf-8") as f:
-                topic_data = json.load(f)
-        except Exception:
-            pass
-
-    current_node_id = topic_data.get("active_node_id") or topic_data.get("active_node")
+    current_node_id = active_sess.get("active_node_id")
     curr_idx = -1
 
     if current_node_id:
@@ -691,7 +724,7 @@ def advance_node() -> None:
 
     if curr_idx == -1:
         for idx, node in enumerate(nodes):
-            if node.get("status") == "active":
+            if node.get("status") in ("active", "in_progress"):
                 curr_idx = idx
                 break
 
@@ -703,12 +736,51 @@ def advance_node() -> None:
 
     completed_node = None
     if curr_idx != -1:
-        nodes[curr_idx]["status"] = "completed"
+        nodes[curr_idx]["status"] = "mastered"
         nodes[curr_idx]["badge_label"] = "Curriculum Mastered"
         completed_node = nodes[curr_idx]
-        archive_completed_node_vault(completed_node, topic_data)
 
-    # 3. Set active_node_id in state/topic.json to next sequential node
+        # Promote note file directly in topic vault: notes/<topic>/<node_id>.md
+        nid = completed_node.get("id", "")
+        node_label = completed_node.get("title") or completed_node.get("label") or nid
+        clean_nid = to_canonical_id(nid)
+        clean_nlbl = to_canonical_id(node_label)
+
+        vault_note_path = None
+        cand_paths = [
+            topic_vault_dir / f"{nid}.md",
+            topic_vault_dir / f"{clean_nid}.md",
+            topic_vault_dir / f"{clean_nlbl}.md"
+        ]
+        for cp in cand_paths:
+            if cp.exists() and cp.is_file():
+                vault_note_path = cp
+                break
+
+        if not vault_note_path:
+            for md_file in topic_vault_dir.glob("*.md"):
+                if not md_file.is_file():
+                    continue
+                try:
+                    md_text = md_file.read_text(encoding="utf-8")
+                    fm_match = re.match(r'^---\s*\r?\n(.*?)\r?\n---', md_text, re.DOTALL)
+                    if fm_match:
+                        fm_content = fm_match.group(1)
+                        id_match = re.search(r'^id:\s*["\']?([^"\'\r\n]+)["\']?', fm_content, re.MULTILINE)
+                        if id_match:
+                            file_id = id_match.group(1).strip()
+                            if file_id == nid or to_canonical_id(file_id) == clean_nid:
+                                vault_note_path = md_file
+                                break
+                except Exception:
+                    pass
+
+        if vault_note_path and vault_note_path.exists():
+            promote_vault_note_frontmatter(vault_note_path)
+        else:
+            archive_completed_node_vault(completed_node, {"topic": raw_topic, "domain": manifest.get("domain", "operations")})
+
+    # 3. Find next sequential node
     next_idx = -1
     search_start = (curr_idx + 1) if curr_idx != -1 else 0
     for idx in range(search_start, len(nodes)):
@@ -722,70 +794,52 @@ def advance_node() -> None:
         next_node = nodes[next_idx]
         next_node["status"] = "active"
         next_node["badge_label"] = "In Progress"
-        topic_data["active_node_id"] = next_node.get("id")
-        topic_data["active_node"] = next_node.get("label")
-        topic_data["phase"] = "teaching"
+        next_nid = next_node.get("id")
+        active_sess["active_node_id"] = next_nid
+        active_sess["phase"] = "teaching"
     else:
-        topic_data["active_node_id"] = None
-        topic_data["active_node"] = None
-        topic_data["phase"] = "completed"
+        active_sess["active_node_id"] = None
+        active_sess["phase"] = "completed"
 
-    # Save curriculum.json atomically
-    tmp_curr = CURRICULUM_FILE.with_name(f"{CURRICULUM_FILE.name}.tmp")
-    with open(tmp_curr, "w", encoding="utf-8") as f:
-        json.dump(curriculum, f, indent=2, ensure_ascii=False)
-    safe_replace(tmp_curr, CURRICULUM_FILE)
+    # Save manifest.json in vault atomically
+    manifest["nodes"] = nodes
+    tmp_man = manifest_file.with_name(f"{manifest_file.name}.tmp")
+    tmp_man.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    safe_replace(tmp_man, manifest_file)
 
-    # Save topic.json atomically
-    tmp_top = TOPIC_FILE.with_name(f"{TOPIC_FILE.name}.tmp")
-    with open(tmp_top, "w", encoding="utf-8") as f:
-        json.dump(topic_data, f, indent=2, ensure_ascii=False)
-    safe_replace(tmp_top, TOPIC_FILE)
+    # Save active_session.json atomically
+    save_active_session(active_sess)
 
-    # 4. Check cache for verification payload
+    # 4. Check cache for verification payload of next_node
+    topic_slug = to_canonical_id(raw_topic or "general")
     if next_node:
         next_nid = next_node.get("id", "")
         clean_nid = to_canonical_id(next_nid)
         clean_nlbl = to_canonical_id(next_node.get("label", ""))
         cache_candidates = [
+            CACHE_DIR / topic_slug / f"verification_{next_nid}.json",
+            CACHE_DIR / topic_slug / f"verification_{clean_nid}.json",
+            CACHE_DIR / topic_slug / f"verification_{clean_nlbl}.json",
             CACHE_DIR / f"verification_{next_nid}.json",
             CACHE_DIR / f"verification_{clean_nid}.json",
             CACHE_DIR / f"verification_{clean_nlbl}.json"
         ]
-        promoted = False
-        for c_path in cache_candidates:
-            if c_path.exists():
-                try:
-                    with open(c_path, "r", encoding="utf-8") as f:
-                        cached_audit = json.load(f)
-                    tmp_v = VERIFICATION_FILE.with_name(f"{VERIFICATION_FILE.name}.tmp")
-                    with open(tmp_v, "w", encoding="utf-8") as f:
-                        json.dump(cached_audit, f, indent=2, ensure_ascii=False)
-                    safe_replace(tmp_v, VERIFICATION_FILE)
-                    c_path.unlink(missing_ok=True)
-                    promoted = True
-                    break
-                except Exception:
-                    pass
+        has_cached = any(c.exists() for c in cache_candidates)
+        if not has_cached:
+            sync_verify_node(next_node, active_sess.get("reference_scope"), raw_topic)
 
-        if not promoted:
-            sync_verify_node(next_node, topic_data.get("reference_scope"))
-
-    # 5. Updates CSS classes in state/roadmap.mmd
-    update_roadmap_styling(ROADMAP_FILE, nodes, topic_data.get("active_node_id"))
-
-    # 6. Deletes old state/quiz.json, state/answer.json, and state/pause.flag
-    if QUIZ_FILE.exists():
-        QUIZ_FILE.unlink(missing_ok=True)
-    if ANSWER_FILE.exists():
-        ANSWER_FILE.unlink(missing_ok=True)
+    # 5. Delete transient .session/ files
     if PAUSE_FLAG.exists():
         try:
             PAUSE_FLAG.unlink(missing_ok=True)
         except Exception:
             pass
 
-    # Sync to knowledge graph if server is running
+    sess_dir = topic_vault_dir / ".session"
+    if sess_dir.exists():
+        shutil.rmtree(sess_dir, ignore_errors=True)
+
+    # 6. Sync to knowledge graph if server is running
     if completed_node:
         try:
             req_body = {
@@ -794,7 +848,7 @@ def advance_node() -> None:
                         "id": completed_node["id"],
                         "label": completed_node.get("label", completed_node["id"]),
                         "status": "mastered",
-                        "topics": [topic_data.get("topic", "")]
+                        "topics": [raw_topic]
                     }
                 ]
             }
@@ -803,7 +857,7 @@ def advance_node() -> None:
                     "id": next_node["id"],
                     "label": next_node.get("label", next_node["id"]),
                     "status": "active",
-                    "topics": [topic_data.get("topic", "")]
+                    "topics": [raw_topic]
                 })
             req = urllib.request.Request(
                 "http://127.0.0.1:8000/api/graph/sync",
@@ -814,9 +868,9 @@ def advance_node() -> None:
         except Exception:
             pass
 
-    c_lbl = completed_node.get("label", "Node") if completed_node else "Node"
+    c_lbl = completed_node.get("label", completed_node.get("title", "Node")) if completed_node else "Node"
     if next_node:
-        n_lbl = next_node.get("label", next_node.get("id"))
+        n_lbl = next_node.get("label", next_node.get("title", next_node.get("id")))
         print(f"[TRANSITION] Completed '{c_lbl}' -> Advanced to '{n_lbl}' ({next_node.get('id')})")
     else:
         print(f"[TRANSITION] Completed '{c_lbl}' -> Curriculum Completed")
@@ -836,8 +890,11 @@ def advance_node() -> None:
     for h_node in horizon_nodes:
         h_id = h_node.get("id", "")
         clean_hid = to_canonical_id(h_id)
-        clean_hlbl = to_canonical_id(h_node.get("label", ""))
+        clean_hlbl = to_canonical_id(h_node.get("label", h_node.get("title", "")))
         candidates = [
+            CACHE_DIR / topic_slug / f"verification_{h_id}.json",
+            CACHE_DIR / topic_slug / f"verification_{clean_hid}.json",
+            CACHE_DIR / topic_slug / f"verification_{clean_hlbl}.json",
             CACHE_DIR / f"verification_{h_id}.json",
             CACHE_DIR / f"verification_{clean_hid}.json",
             CACHE_DIR / f"verification_{clean_hlbl}.json"
@@ -873,8 +930,8 @@ if __name__ == "__main__":
     shuffle_parser.add_argument(
         "--file",
         type=str,
-        default=str(QUIZ_FILE),
-        help="Path to quiz file (default: state/quiz.json)",
+        default="",
+        help="Path to quiz file (default: active topic quiz.json)",
     )
 
     advance_parser = subparsers.add_parser("advance-node", help="Programmatically advance node transition in Python")
@@ -884,9 +941,9 @@ if __name__ == "__main__":
     if args.command == "advance-node":
         advance_node()
     elif args.command == "shuffle-quiz":
-        path = Path(args.file)
+        path = Path(args.file) if args.file else None
         res = shuffle_quiz_file(path)
-        print(f"[SHUFFLE] Shuffled quiz options saved atomically to {path}")
+        print(f"[SHUFFLE] Shuffled quiz options saved atomically to {path or 'active quiz'}")
         sys.exit(0)
     else:
         timeout = getattr(args, "timeout", 180.0)

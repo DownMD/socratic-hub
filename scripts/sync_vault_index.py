@@ -151,6 +151,11 @@ def parse_note_file(note_path: Path, workspace_root: Path) -> Optional[Dict[str,
     if not frontmatter:
         return None
 
+    # Operational Guard 1: Filter strictly for completed/mastered notes, skip in_progress active notes
+    status = str(frontmatter.get("status") or "").lower().strip()
+    if status == "in_progress":
+        return None
+
     note_id = str(frontmatter.get("id") or note_path.stem).strip()
     if not note_id:
         return None

@@ -280,7 +280,8 @@ def scan_prior_knowledge(
 def scan_curriculum_batch(
     workspace_root: Path,
     curriculum_path: Path,
-    domain: Optional[str] = None
+    domain: Optional[str] = None,
+    output_path: Optional[Path] = None
 ) -> None:
     """Performs batch prior knowledge matching across all nodes in a curriculum file."""
     if not curriculum_path.is_absolute():
@@ -333,29 +334,120 @@ def scan_curriculum_batch(
             "matches": matches
         })
 
+    if output_path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_p = output_path.with_name(f"{output_path.name}.tmp")
+        with open(tmp_p, "w", encoding="utf-8") as f:
+            json.dump(results, f, indent=2, ensure_ascii=False)
+        tmp_p.replace(output_path)
+
+    print(json.dumps(results, indent=2, ensure_ascii=False))
+
+
+def scan_topic_prior_knowledge(
+    workspace_root: Path,
+    topic_name: str,
+    domain: Optional[str] = None,
+    output_path: Optional[Path] = None
+) -> None:
+    """Scans notes/index.json to produce categorized prior knowledge candidates for a topic."""
+    concepts, alias_map = load_index_data(workspace_root)
+    topic_clean = clean_simple(topic_name)
+    topic_tokens = set(normalize(topic_name).split())
+    target_domain = domain.lower().strip() if domain else None
+
+    results: List[Dict[str, Any]] = []
+
+    for cid, cdata in concepts.items():
+        ctitle = str(cdata.get("title") or "")
+        cdomain = str(cdata.get("domain") or cdata.get("topic") or "").lower().strip()
+        cmechanism = str(cdata.get("core_mechanism") or "")
+        cpath = str(cdata.get("path") or "")
+
+        norm_title = normalize(ctitle)
+        title_tokens = set(norm_title.split())
+
+        relevance = 0.0
+        if topic_clean in clean_simple(ctitle) or clean_simple(ctitle) in topic_clean:
+            relevance = 1.0
+        elif topic_tokens and title_tokens and (topic_tokens & title_tokens):
+            relevance = len(topic_tokens & title_tokens) / max(len(topic_tokens), 1)
+
+        same_domain = (target_domain is not None and (target_domain in cdomain or cdomain in target_domain))
+
+        if relevance > 0.0 or same_domain or len(results) < 30:
+            if norm_title == normalize(topic_name):
+                tag = "REUSE_CANONICAL" if same_domain or not target_domain else "DOMAIN_HOMONYM"
+            elif same_domain and (relevance >= 0.5 or (topic_tokens & title_tokens)):
+                tag = "EXTEND_CONTEXT"
+            elif not same_domain and target_domain and (relevance >= 0.7):
+                tag = "DOMAIN_HOMONYM"
+            elif same_domain:
+                tag = "EXTEND_CONTEXT"
+            else:
+                tag = "NOVEL"
+
+            rel_path = cpath
+            if rel_path.startswith(str(workspace_root)):
+                try:
+                    rel_path = str(Path(cpath).relative_to(workspace_root))
+                except Exception:
+                    pass
+
+            results.append({
+                "concept": ctitle,
+                "id": cid,
+                "domain": cdomain,
+                "tag": tag,
+                "wikilink": make_wikilink(rel_path, ctitle),
+                "core_mechanism": cmechanism,
+                "score": round(relevance, 2)
+            })
+
+    results.sort(key=lambda x: (0 if x["tag"] == "REUSE_CANONICAL" else (1 if x["tag"] == "EXTEND_CONTEXT" else 2), -x["score"]))
+
+    if output_path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_p = output_path.with_name(f"{output_path.name}.tmp")
+        with open(tmp_p, "w", encoding="utf-8") as f:
+            json.dump(results, f, indent=2, ensure_ascii=False)
+        tmp_p.replace(output_path)
+
     print(json.dumps(results, indent=2, ensure_ascii=False))
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Prior Knowledge Scanner")
     parser.add_argument("--concept", default=None, help="Candidate concept name")
+    parser.add_argument("--topic", default=None, help="Topic name to scan prior knowledge for")
     parser.add_argument("--curriculum", type=str, default=None, help="Path to curriculum JSON for batch scanning")
+    parser.add_argument("--manifest", type=str, default=None, help="Path to topic manifest.json for batch scanning")
     parser.add_argument("--batch", action="store_true", help="Batch scan all concepts in curriculum.json")
     parser.add_argument("--aliases", type=str, default=None, help="Comma-separated query aliases")
     parser.add_argument("--domain", type=str, default=None, help="Candidate domain")
+    parser.add_argument("--output", type=str, default=None, help="Optional output JSON file path")
     parser.add_argument("--workspace-dir", type=str, default=None, help="Workspace root directory")
 
     args = parser.parse_args()
     workspace_root = get_workspace_root(args.workspace_dir)
 
-    if args.batch and not args.curriculum:
-        args.curriculum = str(workspace_root / "state" / "curriculum.json")
+    target_batch_file = args.manifest or args.curriculum
+    if args.batch and not target_batch_file:
+        target_batch_file = str(workspace_root / "state" / "curriculum.json")
 
-    if args.curriculum:
+    if args.topic:
+        scan_topic_prior_knowledge(
+            workspace_root=workspace_root,
+            topic_name=args.topic,
+            domain=args.domain,
+            output_path=Path(args.output) if args.output else None
+        )
+    elif target_batch_file:
         scan_curriculum_batch(
             workspace_root=workspace_root,
-            curriculum_path=Path(args.curriculum),
-            domain=args.domain
+            curriculum_path=Path(target_batch_file),
+            domain=args.domain,
+            output_path=Path(args.output) if args.output else None
         )
     elif args.concept:
         alias_list = [a.strip() for a in args.aliases.split(',')] if args.aliases else None
@@ -366,8 +458,9 @@ def main() -> None:
             domain=args.domain
         )
     else:
-        parser.error("Either --concept or --curriculum / --batch must be provided.")
+        parser.error("Either --topic, --concept, --manifest, or --curriculum / --batch must be provided.")
 
 
 if __name__ == "__main__":
     main()
+

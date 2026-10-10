@@ -14,7 +14,8 @@ from pathlib import Path
 
 WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
 STATE_DIR = WORKSPACE_ROOT / "state"
-VERIFICATION_FILE = STATE_DIR / "verification.json"
+CACHE_DIR = STATE_DIR / "cache"
+VERIFICATION_FILE = CACHE_DIR / "sandbox" / "verification_test.json"
 
 
 def atomic_write_json(file_path: Path, data: dict) -> None:
@@ -27,7 +28,7 @@ def atomic_write_json(file_path: Path, data: dict) -> None:
 
 
 def read_verification_state() -> dict:
-    """Reads current state/verification.json safely."""
+    """Reads verification state safely."""
     with open(VERIFICATION_FILE, "r", encoding="utf-8") as f:
         return json.load(f)
 
@@ -164,6 +165,15 @@ def run_positive_local_audit_test() -> bool:
 
 
 class TestVerifier(unittest.TestCase):
+    def tearDown(self):
+        sandbox_dir = CACHE_DIR / "sandbox"
+        if sandbox_dir.exists():
+            import shutil
+            shutil.rmtree(sandbox_dir, ignore_errors=True)
+        legacy_v = STATE_DIR / "verification.json"
+        if legacy_v.exists():
+            legacy_v.unlink(missing_ok=True)
+
     def test_negative_sandbox(self):
         self.assertTrue(run_negative_sandbox_test())
 

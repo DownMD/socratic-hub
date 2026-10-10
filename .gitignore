@@ -5,13 +5,12 @@ __pycache__/
 env/
 venv/
 
-# Personal study vault (keep placeholder + starter lesson_notes.md)
+# Personal study vault (topic vaults self-contained)
 notes/*/
 notes/index.json
 !notes/.gitkeep
-!notes/lesson_notes.md
 
-# Ephemeral session artifacts
+# Ephemeral session artifacts & caches
 state/quiz.json
 state/answer.json
 state/pause.flag
@@ -19,6 +18,8 @@ state/verification.json
 state/state.json
 state/cache/*
 !state/cache/.gitkeep
+!state/knowledge_graph.json
+!state/active_session.json
 
 # Reference corpora (user-supplied; may be copyrighted)
 references/raw/*

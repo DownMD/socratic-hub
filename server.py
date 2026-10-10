@@ -18,19 +18,13 @@ from pydantic import BaseModel, Field
 
 BASE_DIR = Path(__file__).resolve().parent
 STATE_DIR = BASE_DIR / "state"
-STATE_FILE = STATE_DIR / "state.json"
-STATE_JSON_FILE = STATE_FILE
 NOTES_DIR = BASE_DIR / "notes"
-NOTES_FILE = NOTES_DIR / "lesson_notes.md"
 STATIC_DIR = BASE_DIR / "static"
 INDEX_FILE = STATIC_DIR / "index.html"
-TOPIC_FILE = STATE_DIR / "topic.json"
-QUIZ_FILE = STATE_DIR / "quiz.json"
-ROADMAP_FILE = STATE_DIR / "roadmap.mmd"
-ANSWER_FILE = STATE_DIR / "answer.json"
 KNOWLEDGE_GRAPH_FILE = STATE_DIR / "knowledge_graph.json"
 PAUSE_FLAG = STATE_DIR / "pause.flag"
-CURRICULUM_FILE = STATE_DIR / "curriculum.json"
+ACTIVE_SESSION_FILE = STATE_DIR / "active_session.json"
+CACHE_DIR = STATE_DIR / "cache"
 
 try:
     from scripts.clean_knowledge_graph import transitive_reduction, MERGE_MAP
@@ -57,18 +51,11 @@ DEFAULT_STATE: Dict[str, Any] = {
     "reference_scope": None
 }
 
-DEFAULT_TOPIC_SKELETON: Dict[str, Any] = {
-    "topic": None,
+DEFAULT_ACTIVE_SESSION_SKELETON: Dict[str, Any] = {
+    "active_topic": None,
     "phase": "idle",
-    "status": "standby",
     "active_node_id": None,
-    "active_node": None,
     "reference_scope": {"collection": "general", "tags": []}
-}
-
-DEFAULT_CURRICULUM_SKELETON: Dict[str, Any] = {
-    "topic": "",
-    "nodes": []
 }
 
 DEFAULT_KNOWLEDGE_GRAPH_SKELETON: Dict[str, Any] = {
@@ -76,34 +63,18 @@ DEFAULT_KNOWLEDGE_GRAPH_SKELETON: Dict[str, Any] = {
     "links": []
 }
 
-DEFAULT_ROADMAP_SKELETON: str = "graph TD\n"
-
-DEFAULT_LESSON_NOTES_PLACEHOLDER: str = "<!-- Active lesson notes will appear here -->\n"
-
 
 def ensure_state_skeletons() -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     NOTES_DIR.mkdir(parents=True, exist_ok=True)
 
-    if not TOPIC_FILE.exists() or TOPIC_FILE.stat().st_size == 0 or not TOPIC_FILE.read_text(encoding="utf-8").strip():
-        with open(TOPIC_FILE, "w", encoding="utf-8") as f:
-            json.dump(DEFAULT_TOPIC_SKELETON, f, indent=2)
-
-    if not CURRICULUM_FILE.exists() or CURRICULUM_FILE.stat().st_size == 0 or not CURRICULUM_FILE.read_text(encoding="utf-8").strip():
-        with open(CURRICULUM_FILE, "w", encoding="utf-8") as f:
-            json.dump(DEFAULT_CURRICULUM_SKELETON, f, indent=2)
+    if not ACTIVE_SESSION_FILE.exists() or ACTIVE_SESSION_FILE.stat().st_size == 0 or not ACTIVE_SESSION_FILE.read_text(encoding="utf-8").strip():
+        with open(ACTIVE_SESSION_FILE, "w", encoding="utf-8") as f:
+            json.dump(DEFAULT_ACTIVE_SESSION_SKELETON, f, indent=2)
 
     if not KNOWLEDGE_GRAPH_FILE.exists() or KNOWLEDGE_GRAPH_FILE.stat().st_size == 0 or not KNOWLEDGE_GRAPH_FILE.read_text(encoding="utf-8").strip():
         with open(KNOWLEDGE_GRAPH_FILE, "w", encoding="utf-8") as f:
             json.dump(DEFAULT_KNOWLEDGE_GRAPH_SKELETON, f, indent=2)
-
-    if not ROADMAP_FILE.exists() or ROADMAP_FILE.stat().st_size == 0 or not ROADMAP_FILE.read_text(encoding="utf-8").strip():
-        with open(ROADMAP_FILE, "w", encoding="utf-8") as f:
-            f.write(DEFAULT_ROADMAP_SKELETON)
-
-    if not NOTES_FILE.exists() or NOTES_FILE.stat().st_size == 0 or not NOTES_FILE.read_text(encoding="utf-8").strip():
-        with open(NOTES_FILE, "w", encoding="utf-8") as f:
-            f.write(DEFAULT_LESSON_NOTES_PLACEHOLDER)
 
 
 
@@ -116,6 +87,36 @@ def safe_replace(src: Path, dst: Path, max_retries: int = 5) -> None:
             if attempt == max_retries - 1:
                 raise
             time.sleep(0.05 * pow(2, attempt))
+
+
+def atomic_write_file(path: Path, content: str | bytes) -> None:
+    """Atomic write with flush, fsync, and retry-safe POSIX replacement."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    mode = "wb" if isinstance(content, bytes) else "w"
+    encoding = None if isinstance(content, bytes) else "utf-8"
+    with open(tmp_path, mode, encoding=encoding) as f:
+        f.write(content)
+        f.flush()
+        try:
+            os.fsync(f.fileno())
+        except (AttributeError, OSError):
+            pass
+    safe_replace(tmp_path, path)
+
+
+def atomic_write_json(path: Path, data: Any) -> None:
+    """Atomic JSON write with flush, fsync, and retry-safe POSIX replacement."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+        f.flush()
+        try:
+            os.fsync(f.fileno())
+        except (AttributeError, OSError):
+            pass
+    safe_replace(tmp_path, path)
 
 
 def delete_pause_flag() -> None:
@@ -232,6 +233,81 @@ def find_fuzzy_concept_match(candidate_title: str, existing_nodes: List[Dict[str
     return None
 
 
+def normalize_concept_id(text: str) -> str:
+    """Normalize text into an alphanumeric identifier stripping punctuation and apostrophe s."""
+    if not text:
+        return ""
+    cleaned = clean_label(str(text))
+    cleaned = re.sub(r"['\u2019]s\b", "s", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"[^a-zA-Z0-9]+", "-", cleaned.lower()).strip("-")
+    cleaned = re.sub(r"-s-", "s-", cleaned)
+    if cleaned.endswith("-s"):
+        cleaned = cleaned[:-2] + "s"
+    return cleaned
+
+
+def find_matching_node_key(cand_id: str, cand_title: str, nodes_dict: Dict[str, Dict[str, Any]]) -> Optional[str]:
+    """Find existing node key in nodes_dict by exact key, canonical ID, normalized concept ID, alias, or fuzzy title match."""
+    if not nodes_dict:
+        return None
+    # 1. Exact match
+    if cand_id and cand_id in nodes_dict:
+        return cand_id
+
+    # 2. Canonical ID match
+    cand_cid = to_canonical_id(cand_id)
+    cand_ctitle = to_canonical_id(cand_title)
+    cand_cids = {c for c in (cand_cid, cand_ctitle) if c and c != "default"}
+
+    for key, node in nodes_dict.items():
+        node_cids = {
+            to_canonical_id(key),
+            to_canonical_id(node.get("id", "")),
+            to_canonical_id(node.get("title", "")),
+            to_canonical_id(node.get("label", ""))
+        }
+        for al in node.get("aliases", []):
+            node_cids.add(to_canonical_id(str(al)))
+        node_cids.discard("default")
+        node_cids.discard("")
+        if cand_cids & node_cids:
+            return key
+
+    # 3. Normalized concept ID match
+    cand_norm_id = normalize_concept_id(cand_id)
+    cand_norm_title = normalize_concept_id(cand_title)
+    cand_norms = {c for c in (cand_norm_id, cand_norm_title) if c}
+
+    for key, node in nodes_dict.items():
+        node_norms = {
+            normalize_concept_id(key),
+            normalize_concept_id(node.get("id", "")),
+            normalize_concept_id(node.get("title", "")),
+            normalize_concept_id(node.get("label", ""))
+        }
+        for al in node.get("aliases", []):
+            node_norms.add(normalize_concept_id(str(al)))
+        node_norms.discard("")
+        if cand_norms & node_norms:
+            return key
+
+    # 4. Fuzzy concept match
+    existing_list = list(nodes_dict.values())
+    matched_id = None
+    if cand_title:
+        matched_id = find_fuzzy_concept_match(cand_title, existing_list)
+    if not matched_id and cand_id:
+        matched_id = find_fuzzy_concept_match(cand_id.replace("-", " "), existing_list)
+    if matched_id:
+        if matched_id in nodes_dict:
+            return matched_id
+        for key, node in nodes_dict.items():
+            if node.get("id") == matched_id:
+                return key
+
+    return None
+
+
 def parse_frontmatter(content: str) -> Dict[str, Any]:
     fm_match = re.match(r'^---\s*\r?\n([\s\S]*?)\r?\n---\s*\r?\n', content)
     if not fm_match:
@@ -260,6 +336,443 @@ def parse_frontmatter(content: str) -> Dict[str, Any]:
         else:
             current_list_key = None
     return data
+
+
+def get_active_session() -> Dict[str, Any]:
+    """Retrieve ephemeral active session pointer from state/active_session.json."""
+    if not ACTIVE_SESSION_FILE.exists():
+        return DEFAULT_ACTIVE_SESSION_SKELETON.copy()
+    try:
+        data = json.loads(ACTIVE_SESSION_FILE.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return {**DEFAULT_ACTIVE_SESSION_SKELETON, **data}
+    except Exception:
+        pass
+    return DEFAULT_ACTIVE_SESSION_SKELETON.copy()
+
+
+def save_active_session(sess: Dict[str, Any]) -> None:
+    """Atomically save active session pointer to state/active_session.json."""
+    atomic_write_json(ACTIVE_SESSION_FILE, sess)
+
+
+def get_active_topic_dir() -> Optional[Path]:
+    """Resolve topic directory for the active session."""
+    sess = get_active_session()
+    topic = sess.get("active_topic")
+    if not topic or topic in ("Not Set", "not-set", "none", ""):
+        return None
+    return get_topic_notes_dir(topic)
+
+
+def load_topic_manifest(topic_name_or_dir: Any) -> Optional[Dict[str, Any]]:
+    """Load canonical manifest.json for a topic, synthesizing if missing."""
+    if isinstance(topic_name_or_dir, Path):
+        t_dir = topic_name_or_dir
+    else:
+        t_dir = get_topic_notes_dir(str(topic_name_or_dir))
+    if not t_dir or not t_dir.exists():
+        return None
+    man_file = t_dir / "manifest.json"
+    if man_file.exists():
+        try:
+            data = json.loads(man_file.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and data.get("nodes"):
+                return data
+        except Exception:
+            pass
+    synth = synthesize_manifest_for_topic(t_dir)
+    if synth and synth.get("nodes"):
+        save_topic_manifest(t_dir, synth)
+        return synth
+    return None
+
+
+def save_topic_manifest(topic_name_or_dir: Any, manifest: Dict[str, Any]) -> None:
+    """Atomically save topic manifest.json."""
+    if isinstance(topic_name_or_dir, Path):
+        t_dir = topic_name_or_dir
+    else:
+        t_dir = get_topic_notes_dir(str(topic_name_or_dir))
+    if not t_dir:
+        return
+    t_dir.mkdir(parents=True, exist_ok=True)
+    man_file = t_dir / "manifest.json"
+    atomic_write_json(man_file, manifest)
+
+
+def compile_mermaid_dag(manifest: Dict[str, Any]) -> str:
+    """Dynamically compile Mermaid flowchart string from manifest nodes and prerequisites.
+    Prunes nodes with 0 incoming and 0 outgoing edges unless active or diagnostic.
+    """
+    nodes = manifest.get("nodes", [])
+    if not nodes:
+        return "graph TD\n"
+
+    # Map all IDs, canonical IDs, and aliases to nodes
+    id_map: Dict[str, str] = {}
+    for node in nodes:
+        nid = str(node.get("id", "")).strip()
+        if not nid:
+            continue
+        id_map[nid] = nid
+        id_map[nid.lower()] = nid
+        id_map[to_canonical_id(nid)] = nid
+        id_map[normalize_concept_id(nid)] = nid
+        if node.get("title"):
+            id_map[to_canonical_id(node["title"])] = nid
+            id_map[normalize_concept_id(node["title"])] = nid
+        if node.get("label"):
+            id_map[to_canonical_id(node["label"])] = nid
+            id_map[normalize_concept_id(node["label"])] = nid
+        for al in node.get("aliases", []):
+            id_map[str(al).strip()] = nid
+            id_map[str(al).strip().lower()] = nid
+            id_map[to_canonical_id(al)] = nid
+            id_map[normalize_concept_id(al)] = nid
+
+    # Compute incoming prerequisites and outgoing dependents
+    incoming: Dict[str, set] = {str(n.get("id", "")).strip(): set() for n in nodes}
+    outgoing: Dict[str, set] = {str(n.get("id", "")).strip(): set() for n in nodes}
+
+    for node in nodes:
+        nid = str(node.get("id", "")).strip()
+        prereqs = node.get("prerequisites", [])
+        if isinstance(prereqs, str):
+            prereqs = [prereqs]
+        for pr in prereqs:
+            clean_pr = str(pr).replace("[[", "").replace("]]", "").strip()
+            src_id = (
+                id_map.get(clean_pr)
+                or id_map.get(clean_pr.lower())
+                or id_map.get(to_canonical_id(clean_pr))
+                or id_map.get(normalize_concept_id(clean_pr))
+            )
+            if src_id and src_id in incoming and src_id != nid:
+                incoming[nid].add(src_id)
+                outgoing[src_id].add(nid)
+
+    # Prune any node that has 0 incoming prerequisites AND 0 outgoing dependents UNLESS
+    # it is explicitly marked as active or origin == 'diagnostic'
+    filtered_nodes = []
+    for node in nodes:
+        nid = str(node.get("id", "")).strip()
+        nst = str(node.get("status", "")).lower().strip()
+        badge = str(node.get("badge_label", "")).lower().strip()
+        origin = str(node.get("origin", "")).lower().strip()
+        is_active = (nst in ("active", "in_progress") or "active" in badge or "progress" in badge)
+        is_diag = (origin == "diagnostic" or "baseline" in badge)
+
+        in_cnt = len(incoming.get(nid, set()))
+        out_cnt = len(outgoing.get(nid, set()))
+
+        if len(nodes) > 1 and in_cnt == 0 and out_cnt == 0 and not is_active and not is_diag:
+            continue  # Prune isolated phantom node
+        filtered_nodes.append(node)
+
+    if not filtered_nodes:
+        filtered_nodes = nodes
+
+    lines = [
+        "flowchart TD",
+        "  classDef completed stroke:#22c55e,stroke-width:2px;",
+        "  classDef active stroke:#38bdf8,stroke-width:3px;",
+        "  classDef pending stroke:#475569,stroke-width:1px;",
+        "  classDef mastered stroke:#22c55e,stroke-width:2px;",
+        ""
+    ]
+    id_to_key: Dict[str, str] = {}
+    for idx, node in enumerate(filtered_nodes):
+        nid = str(node.get("id", f"node_{idx}")).strip()
+        nkey = f"N{idx+1}"
+        id_to_key[nid] = nkey
+        id_to_key[nid.lower()] = nkey
+        id_to_key[to_canonical_id(nid)] = nkey
+        id_to_key[normalize_concept_id(nid)] = nkey
+        if node.get("title"):
+            id_to_key[to_canonical_id(node["title"])] = nkey
+            id_to_key[normalize_concept_id(node["title"])] = nkey
+        if node.get("label"):
+            id_to_key[to_canonical_id(node["label"])] = nkey
+            id_to_key[normalize_concept_id(node["label"])] = nkey
+        for al in node.get("aliases", []):
+            id_to_key[str(al).strip()] = nkey
+            id_to_key[str(al).strip().lower()] = nkey
+            id_to_key[to_canonical_id(al)] = nkey
+            id_to_key[normalize_concept_id(al)] = nkey
+        nlbl = str(node.get("title") or node.get("label") or nid).replace('"', "'").strip()
+        nst = str(node.get("status", "pending")).lower().strip()
+        if nst not in ("completed", "active", "pending", "mastered"):
+            nst = "pending"
+        lines.append(f'  {nkey}["{nlbl}"]:::{nst}')
+
+    lines.append("")
+    edges_added = set()
+    for idx, node in enumerate(filtered_nodes):
+        nid = str(node.get("id", f"node_{idx}")).strip()
+        nkey = id_to_key.get(nid) or f"N{idx+1}"
+        prereqs = node.get("prerequisites", [])
+        if isinstance(prereqs, str):
+            prereqs = [prereqs]
+        for pr in prereqs:
+            clean_pr = str(pr).replace("[[", "").replace("]]", "").strip()
+            pr_key = (
+                id_to_key.get(clean_pr)
+                or id_to_key.get(clean_pr.lower())
+                or id_to_key.get(to_canonical_id(clean_pr))
+                or id_to_key.get(normalize_concept_id(clean_pr))
+            )
+            if pr_key and pr_key != nkey and (pr_key, nkey) not in edges_added:
+                edges_added.add((pr_key, nkey))
+                lines.append(f"  {pr_key} --> {nkey}")
+
+    return "\n".join(lines) + "\n"
+
+
+def synthesize_manifest_for_topic(topic_dir: Path) -> Dict[str, Any]:
+    """Synthesize manifest.json from existing topic notes, session.json, curriculum.json, and roadmap.mmd."""
+    topic_name = topic_dir.name.replace("-", " ").title()
+    domain = "general"
+    ref_scope = {"collection": "general", "tags": []}
+    nodes_dict: Dict[str, Dict[str, Any]] = {}
+    alias_map: Dict[str, str] = {}
+
+    def add_or_merge_node(
+        cand_id: str,
+        cand_title: str,
+        cand_prereqs: List[str],
+        cand_status: Optional[str] = None,
+        cand_badge: Optional[str] = None,
+        cand_origin: Optional[str] = None,
+        node_number: Optional[int] = None
+    ) -> str:
+        clean_cand_title = clean_label(cand_title or cand_id)
+        matched_key = find_matching_node_key(cand_id, clean_cand_title, nodes_dict)
+
+        if matched_key:
+            existing = nodes_dict[matched_key]
+            existing.setdefault("aliases", [])
+            for a in (cand_id, clean_cand_title, to_canonical_id(clean_cand_title), to_canonical_id(cand_id)):
+                if a and a not in existing["aliases"] and a != existing["id"]:
+                    existing["aliases"].append(a)
+            for a in (cand_id, clean_cand_title, to_canonical_id(clean_cand_title), to_canonical_id(cand_id), normalize_concept_id(cand_id), normalize_concept_id(clean_cand_title)):
+                if a:
+                    alias_map[a] = existing["id"]
+
+            for pr in cand_prereqs:
+                if pr and pr not in existing["prerequisites"]:
+                    existing["prerequisites"].append(pr)
+
+            ex_st = str(existing.get("status", "")).lower()
+            cand_st = str(cand_status or "").lower()
+            if cand_st in ("mastered", "completed"):
+                existing["status"] = "mastered"
+                existing["badge_label"] = "Curriculum Mastered"
+            elif cand_st in ("active", "in_progress") and ex_st not in ("mastered", "completed"):
+                existing["status"] = "active"
+                existing["badge_label"] = "In Progress"
+
+            if cand_origin and not existing.get("origin"):
+                existing["origin"] = cand_origin
+            if node_number and not existing.get("node_number"):
+                existing["node_number"] = node_number
+            return existing["id"]
+        else:
+            nid = cand_id or to_canonical_id(clean_cand_title)
+            nodes_dict[nid] = {
+                "id": nid,
+                "title": clean_cand_title,
+                "label": clean_cand_title,
+                "prerequisites": list(cand_prereqs),
+                "status": cand_status or "planned",
+                "badge_label": cand_badge or ("Curriculum Mastered" if cand_status in ("mastered", "completed") else "In Progress"),
+                "aliases": []
+            }
+            if cand_origin:
+                nodes_dict[nid]["origin"] = cand_origin
+            if node_number:
+                nodes_dict[nid]["node_number"] = node_number
+            alias_map[nid] = nid
+            alias_map[to_canonical_id(nid)] = nid
+            alias_map[normalize_concept_id(nid)] = nid
+            if clean_cand_title:
+                alias_map[clean_cand_title] = nid
+                alias_map[to_canonical_id(clean_cand_title)] = nid
+                alias_map[normalize_concept_id(clean_cand_title)] = nid
+            return nid
+
+    session_file = topic_dir / "session.json"
+    session_completed: List[str] = []
+    session_current = ""
+    if session_file.exists():
+        try:
+            s_data = json.loads(session_file.read_text(encoding="utf-8"))
+            topic_name = s_data.get("topic") or topic_name
+            ref_scope = s_data.get("reference_scope") or ref_scope
+            session_completed = [clean_label(c) for c in (s_data.get("completed_nodes") or [])]
+            session_current = clean_label(s_data.get("current_node") or "")
+        except Exception:
+            pass
+
+    curr_file = topic_dir / "curriculum.json"
+    if curr_file.exists():
+        try:
+            c_data = json.loads(curr_file.read_text(encoding="utf-8"))
+            topic_name = c_data.get("topic") or topic_name
+            for c_node in (c_data.get("nodes") or []):
+                nid = c_node.get("id") or to_canonical_id(c_node.get("label") or c_node.get("title"))
+                clean_prereqs = [
+                    str(p).replace("[[", "").replace("]]", "").strip()
+                    for p in (c_node.get("prerequisites") or [])
+                    if str(p).replace("[", "").replace("]", "").strip()
+                ]
+                add_or_merge_node(
+                    nid,
+                    c_node.get("title") or c_node.get("label") or nid,
+                    clean_prereqs,
+                    c_node.get("status", "planned"),
+                    c_node.get("badge_label", ""),
+                    c_node.get("origin"),
+                    c_node.get("node_number")
+                )
+        except Exception:
+            pass
+
+    for md_path in sorted(topic_dir.glob("*.md")):
+        if md_path.name.lower() in ("notes.md", "lesson_notes.md"):
+            continue
+        try:
+            content = md_path.read_text(encoding="utf-8")
+            fm = parse_frontmatter(content)
+            nid = fm.get("id") or md_path.stem
+            clean_title = fm.get("title") or md_path.stem.replace("-", " ").title()
+            if not domain or domain == "general":
+                domain = fm.get("domain") or domain
+            raw_prereqs = fm.get("prerequisites") or []
+            clean_prereqs = []
+            for rp in raw_prereqs:
+                c_p = str(rp).replace("[[", "").replace("]]", "").replace("[", "").replace("]", "").strip()
+                if c_p and c_p not in clean_prereqs:
+                    clean_prereqs.append(c_p)
+            status = fm.get("status")
+            if not status:
+                if any(to_canonical_id(c) == to_canonical_id(clean_title) for c in session_completed):
+                    status = "mastered"
+                elif session_current and to_canonical_id(session_current) == to_canonical_id(clean_title):
+                    status = "active"
+                else:
+                    status = "mastered" if "[!success]" in content else "in_progress"
+
+            badge = "Curriculum Mastered" if status in ("mastered", "completed") else "In Progress"
+            add_or_merge_node(nid, clean_title, clean_prereqs, status, badge, fm.get("origin"))
+        except Exception:
+            pass
+
+    roadmap_file = topic_dir / "roadmap.mmd"
+    if roadmap_file.exists():
+        try:
+            r_text = roadmap_file.read_text(encoding="utf-8")
+            key_to_id: Dict[str, str] = {}
+            node_defs = re.findall(r'([a-zA-Z0-9_\-]+)\s*\["?([^"\]]+)"?\](?::::(\w+))?', r_text)
+            for nk, raw_lbl, st in node_defs:
+                lbl = clean_label(raw_lbl)
+                cid = to_canonical_id(lbl)
+                status = "mastered" if st in ("completed", "mastered") else ("active" if st == "active" else "planned")
+                badge = "Curriculum Mastered" if status in ("mastered", "completed") else "In Progress"
+                resolved_id = add_or_merge_node(cid, lbl, [], status, badge)
+                key_to_id[nk] = resolved_id
+                alias_map[nk] = resolved_id
+
+            edge_defs = re.findall(r'([a-zA-Z0-9_\-]+)(?:\[[^\]]*\])?\s*-->\s*([a-zA-Z0-9_\-]+)', r_text)
+            for sk, tk in edge_defs:
+                s_id = alias_map.get(sk) or key_to_id.get(sk) or to_canonical_id(sk)
+                t_id = alias_map.get(tk) or key_to_id.get(tk) or to_canonical_id(tk)
+                s_canon = alias_map.get(s_id, s_id)
+                t_canon = alias_map.get(t_id, t_id)
+                if s_canon and t_canon and t_canon in nodes_dict and s_canon != t_canon:
+                    if s_canon not in nodes_dict[t_canon]["prerequisites"]:
+                        nodes_dict[t_canon]["prerequisites"].append(s_canon)
+        except Exception:
+            pass
+
+    for node in nodes_dict.values():
+        clean_prs = []
+        for pr in node.get("prerequisites", []):
+            raw_pr = str(pr).replace("[[", "").replace("]]", "").strip()
+            resolved = alias_map.get(raw_pr) or alias_map.get(to_canonical_id(raw_pr)) or alias_map.get(normalize_concept_id(raw_pr)) or raw_pr
+            if resolved in alias_map:
+                resolved = alias_map[resolved]
+            if resolved and resolved != node["id"] and resolved in nodes_dict and resolved not in clean_prs:
+                clean_prs.append(resolved)
+        node["prerequisites"] = clean_prs
+
+    return {
+        "topic": topic_name,
+        "domain": domain,
+        "reference_scope": ref_scope,
+        "nodes": list(nodes_dict.values())
+    }
+
+
+def reconcile_startup_state() -> None:
+    """Startup crash recovery, orphan directory sweep, transient cleanup, and legacy manifest synthesis."""
+    if not NOTES_DIR.exists():
+        return
+
+    # 1. Orphan Directory Sweep: purge any notes/*/ containing .diagnostic/ but lacking a valid manifest.json
+    for item in list(NOTES_DIR.iterdir()):
+        if item.is_dir() and not item.name.startswith("."):
+            diag_dir = item / ".diagnostic"
+            manifest_file = item / "manifest.json"
+            if diag_dir.exists() and (not manifest_file.exists() or manifest_file.stat().st_size == 0):
+                has_notes = any(f.suffix == ".md" and f.name.lower() not in ("notes.md", "lesson_notes.md") for f in item.iterdir() if f.is_file())
+                if not has_notes:
+                    try:
+                        shutil.rmtree(item, ignore_errors=True)
+                    except Exception:
+                        pass
+
+    # 2. Transient Cleanup: unlink dangling .tmp files, leftover .session/ directories, or state/pause.flag
+    for root, _, files in os.walk(NOTES_DIR):
+        for f in files:
+            if f.endswith(".tmp"):
+                try:
+                    (Path(root) / f).unlink(missing_ok=True)
+                except Exception:
+                    pass
+    if STATE_DIR.exists():
+        for f in STATE_DIR.glob("*.tmp"):
+            try:
+                f.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    active_sess = get_active_session()
+    active_top = active_sess.get("active_topic")
+    is_paused = (active_sess.get("phase") == "PAUSED")
+
+    for item in NOTES_DIR.iterdir():
+        if item.is_dir() and not item.name.startswith("."):
+            sess_dir = item / ".session"
+            if sess_dir.exists():
+                is_active_topic = bool(active_top and (sanitize_topic(active_top) == sanitize_topic(item.name) or active_top.strip().lower() == item.name.strip().lower()))
+                if not is_active_topic or active_sess.get("phase") in ("idle", "standby", ""):
+                    try:
+                        shutil.rmtree(sess_dir, ignore_errors=True)
+                    except Exception:
+                        pass
+
+    if not is_paused and PAUSE_FLAG.exists():
+        delete_pause_flag()
+
+    # 3. Legacy Manifest Synthesis (Operational Guard 2)
+    for item in NOTES_DIR.iterdir():
+        if item.is_dir() and not item.name.startswith("."):
+            man_file = item / "manifest.json"
+            if not man_file.exists() or man_file.stat().st_size == 0:
+                synth = synthesize_manifest_for_topic(item)
+                if synth and synth.get("nodes"):
+                    save_topic_manifest(item, synth)
 
 
 def load_knowledge_graph() -> Dict[str, Any]:
@@ -574,163 +1087,165 @@ def sanitize_and_normalize_quiz(raw_text: str) -> Dict[str, Any]:
 
 
 def load_state() -> Dict[str, Any]:
-    if STATE_FILE.exists():
-        try:
-            with open(STATE_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception:
-            data = DEFAULT_STATE.copy()
-    else:
-        data = DEFAULT_STATE.copy()
+    """Hydrates session state strictly from state/active_session.json and topic manifest."""
+    data = DEFAULT_STATE.copy()
 
-    # Ensure all default keys exist
-    for k, v in DEFAULT_STATE.items():
-        if k not in data:
-            data[k] = v
+    # 1. Ephemeral Active Session pointer strictly from state/active_session.json
+    active_sess = get_active_session()
+    active_topic = active_sess.get("active_topic")
+    active_phase = active_sess.get("phase") or "idle"
 
-    state_dirty = False
-    if TOPIC_FILE.exists():
-        try:
-            with open(TOPIC_FILE, "r", encoding="utf-8") as f:
-                t_data = json.load(f)
-                if "topic" in t_data:
-                    top_val = t_data.get("topic")
-                    if not top_val or top_val == "Not Set":
-                        if data.get("topic") is not None:
-                            data["topic"] = None
-                            state_dirty = True
-                    elif data.get("topic") != top_val:
-                        data["topic"] = top_val
-                        state_dirty = True
-                if "phase" in t_data and data.get("phase") != t_data["phase"]:
-                    data["phase"] = t_data.get("phase") or "idle"
-                    state_dirty = True
-                if "status" in t_data and data.get("status") != t_data["status"]:
-                    data["status"] = t_data.get("status")
-                    state_dirty = True
-                if "reference_scope" in t_data and data.get("reference_scope") != t_data["reference_scope"]:
-                    data["reference_scope"] = t_data["reference_scope"]
-                    state_dirty = True
-                if "active_node" in t_data and data.get("active_node") != t_data["active_node"]:
-                    data["active_node"] = t_data["active_node"]
-                    data["current_node"] = t_data["active_node"]
-                    state_dirty = True
-                if "active_node_id" in t_data and data.get("active_node_id") != t_data["active_node_id"]:
-                    data["active_node_id"] = t_data["active_node_id"]
-                    state_dirty = True
-        except Exception:
-            pass
-
-    if ROADMAP_FILE.exists():
-        try:
-            with open(ROADMAP_FILE, "r", encoding="utf-8") as f:
-                m_content = f.read()
-                if data.get("dag_mermaid") != m_content:
-                    data["dag_mermaid"] = m_content
-                    state_dirty = True
-        except Exception:
-            pass
-
-    if NOTES_FILE.exists():
-        try:
-            with open(NOTES_FILE, "r", encoding="utf-8") as f:
-                n_content = f.read()
-                if data.get("lesson_markdown") != n_content:
-                    data["lesson_markdown"] = n_content
-                    data["notes"] = n_content
-                    state_dirty = True
-        except Exception:
-            pass
-
-    if QUIZ_FILE.exists():
-        try:
-            raw_q = QUIZ_FILE.read_text(encoding="utf-8").strip()
-            if not raw_q:
-                if data.get("active_quiz") is not None:
-                    data["active_quiz"] = None
-                    data["quiz"] = None
-                    state_dirty = True
-            else:
-                q_data = sanitize_and_normalize_quiz(raw_q)
-                if not q_data or not q_data.get("questions"):
-                    if data.get("active_quiz") is not None:
-                        data["active_quiz"] = None
-                        data["quiz"] = None
-                        state_dirty = True
-                else:
-                    old_q = data.get("active_quiz") or {}
-                    if q_data != old_q:
-                        delete_pause_flag()
-                        data["active_quiz"] = q_data
-                        data["quiz"] = q_data
-                        data["latest_answer"] = None
-                        data["quiz_history"] = []
-                        if ANSWER_FILE.exists():
-                            ANSWER_FILE.unlink(missing_ok=True)
-                        state_dirty = True
-                    else:
-                        data["active_quiz"] = q_data
-                        data["quiz"] = q_data
-        except Exception:
-            pass
-
-    is_active = bool(
-        data.get("topic") and
-        data.get("topic") not in ("", "Not Set", None) and
-        str(data.get("phase", "")).lower() not in ("idle", "standby", "")
+    has_active_topic = bool(
+        active_topic and
+        active_topic not in ("", "Not Set", "not-set", "none", None)
     )
-    if data.get("session_active") != is_active:
-        data["session_active"] = is_active
-        state_dirty = True
 
-    if not is_active:
-        if data.get("topic") in ("Not Set", ""):
-            data["topic"] = None
-            state_dirty = True
-        if data.get("status") != "standby":
-            data["status"] = "standby"
-            state_dirty = True
+    if has_active_topic:
+        status = "active"
+        session_active = True
     else:
-        if data.get("status") != "active":
-            data["status"] = "active"
-            state_dirty = True
+        if str(active_phase).lower() == "reading":
+            status = "reading"
+            session_active = True
+        elif str(active_phase).lower() in ("idle", "standby", ""):
+            status = "standby"
+            session_active = False
+        else:
+            status = "active"
+            session_active = True
 
-    active_lbl = data.get("active_node") or data.get("current_node") or None
+    t_dir = get_topic_notes_dir(active_topic) if has_active_topic else None
+    manifest = None
+    if has_active_topic and t_dir and t_dir.exists():
+        manifest = load_topic_manifest(t_dir)
+
+    # Dynamic DAG compilation
+    compiled_dag = "graph TD\n"
+    if manifest:
+        data["manifest"] = manifest
+        compiled_dag = compile_mermaid_dag(manifest)
+    data["dag_mermaid"] = compiled_dag
+
+    # Active Node resolution
+    active_nid = active_sess.get("active_node_id")
+    active_lbl = None
+    if manifest and manifest.get("nodes"):
+        nodes = manifest["nodes"]
+        if active_nid:
+            for n in nodes:
+                if str(n.get("id")) == str(active_nid) or to_canonical_id(n.get("id", "")) == to_canonical_id(active_nid):
+                    active_lbl = n.get("title") or n.get("label") or active_nid
+                    break
+        if not active_lbl:
+            for n in nodes:
+                if str(n.get("status", "")).lower() == "active":
+                    active_nid = n.get("id")
+                    active_lbl = n.get("title") or n.get("label") or active_nid
+                    break
+        if not active_lbl:
+            for n in nodes:
+                if str(n.get("status", "")).lower() not in ("mastered", "completed"):
+                    active_nid = n.get("id")
+                    active_lbl = n.get("title") or n.get("label") or active_nid
+                    break
+
+    # Read active note markdown directly from topic vault
+    note_content = ""
+    if has_active_topic and t_dir and active_nid:
+        cand_files = [
+            t_dir / f"{active_nid}.md",
+            t_dir / f"{to_canonical_id(active_nid)}.md"
+        ]
+        if active_lbl:
+            cand_files.append(t_dir / f"{to_canonical_id(active_lbl)}.md")
+        for cf in cand_files:
+            if cf.exists() and cf.is_file():
+                try:
+                    note_content = cf.read_text(encoding="utf-8")
+                    break
+                except Exception:
+                    pass
+
+    if not note_content and has_active_topic and t_dir:
+        cand_notes = t_dir / "notes.md"
+        if cand_notes.exists():
+            try:
+                note_content = cand_notes.read_text(encoding="utf-8")
+            except Exception:
+                pass
+
+    data["lesson_markdown"] = note_content
+    data["notes"] = note_content
+
+    # Active quiz reading from .session/ or .diagnostic/
+    q_data = None
+    if has_active_topic and t_dir:
+        target_quiz_file = (t_dir / ".diagnostic" / "diagnostic_quiz.json") if active_phase == "probing" else (t_dir / ".session" / "quiz.json")
+        if target_quiz_file.exists():
+            try:
+                raw_q = target_quiz_file.read_text(encoding="utf-8").strip()
+                if raw_q:
+                    q_data = sanitize_and_normalize_quiz(raw_q)
+            except Exception:
+                pass
+
+    data["active_quiz"] = q_data
+    data["quiz"] = q_data
+
+    # Latest answer reading from .session/ or .diagnostic/
+    ans_data = None
+    if has_active_topic and t_dir:
+        target_ans_file = (t_dir / ".diagnostic" / "baseline_passes.json") if active_phase == "probing" else (t_dir / ".session" / "answer.json")
+        if target_ans_file.exists():
+            try:
+                ans_data = json.loads(target_ans_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+    data["latest_answer"] = ans_data
+    data["quiz_history"] = [ans_data] if ans_data else []
+
+    data["topic"] = active_topic if has_active_topic else None
+    data["phase"] = active_phase
+    data["session_active"] = session_active
+    data["status"] = status
+    data["active_node_id"] = active_nid
     data["active_node"] = active_lbl
     data["current_node"] = active_lbl or ""
-    data["notes"] = data.get("notes") or data.get("lesson_markdown") or ""
-    data["lesson_markdown"] = data["notes"]
-    data["quiz"] = data.get("quiz") or data.get("active_quiz")
-    data["active_quiz"] = data["quiz"]
-
-    if state_dirty:
-        save_state(data)
+    data["reference_scope"] = active_sess.get("reference_scope")
 
     return data
 
 
 def save_state(state: Dict[str, Any]) -> None:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    temp_file = STATE_FILE.with_suffix(".tmp")
-    is_idle = (state.get("session_active") is False) or (state.get("topic") in ("Not Set", "", None) and str(state.get("phase", "")).lower() in ("idle", "standby", ""))
-    if is_idle:
-        payload = {
-            "session_active": False,
-            "topic": None,
-            "status": "standby",
-            "phase": "idle",
-            "active_node": None,
-            "notes": "",
-            "lesson_markdown": "",
-            "dag_mermaid": "graph TD\n",
-            "quiz": None
-        }
-    else:
-        payload = state
+    """Persist session mutations into state/active_session.json and notes/<active_topic>/manifest.json. Deprecates state/state.json."""
+    active_sess = get_active_session()
+    changed = False
 
-    with open(temp_file, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2, ensure_ascii=False)
-    safe_replace(temp_file, STATE_FILE)
+    if "topic" in state and state["topic"] != active_sess.get("active_topic"):
+        active_sess["active_topic"] = state["topic"]
+        changed = True
+    if "phase" in state and state["phase"] != active_sess.get("phase"):
+        active_sess["phase"] = state["phase"]
+        changed = True
+    if "active_node_id" in state and state["active_node_id"] != active_sess.get("active_node_id"):
+        active_sess["active_node_id"] = state["active_node_id"]
+        changed = True
+    if "reference_scope" in state and state["reference_scope"]:
+        if state["reference_scope"] != active_sess.get("reference_scope"):
+            active_sess["reference_scope"] = state["reference_scope"]
+            changed = True
+
+    if changed:
+        save_active_session(active_sess)
+
+    # If manifest is present and active topic exists, save manifest
+    if "manifest" in state and state["manifest"]:
+        topic = active_sess.get("active_topic")
+        if topic:
+            t_dir = get_topic_notes_dir(topic)
+            if t_dir and t_dir.exists():
+                save_topic_manifest(t_dir, state["manifest"])
 
 
 app = FastAPI(title="Autonomous 1-on-1 Learning Hub Backend")
@@ -747,8 +1262,9 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup_flush_buffers():
-    """Purge quiz_history and latest_answer on startup and ensure state skeletons."""
+    """Startup reconciliation, buffer flush, and state skeletons assurance."""
     ensure_state_skeletons()
+    reconcile_startup_state()
     state = load_state()
     state["quiz_history"] = []
     state["latest_answer"] = None
@@ -759,6 +1275,7 @@ def startup_flush_buffers():
 class TopicRequest(BaseModel):
     topic: str
     reference_scope: Optional[Dict[str, Any]] = None
+    mode: Optional[str] = "study"
 
 
 class QuizRequest(BaseModel):
@@ -985,13 +1502,14 @@ def sync_knowledge_graph(req: GraphSyncRequest) -> Dict[str, Any]:
     isolated_node_ids = [nid for nid, deg in degree_map.items() if deg == 0]
     if isolated_node_ids:
         curriculum_nodes = []
-        if CURRICULUM_FILE.exists():
-            try:
-                with open(CURRICULUM_FILE, "r", encoding="utf-8") as f:
-                    c_data = json.load(f)
-                    curriculum_nodes = c_data.get("nodes", [])
-            except Exception:
-                pass
+        active_sess = get_active_session()
+        active_top = active_sess.get("active_topic")
+        if active_top:
+            t_dir = get_topic_notes_dir(active_top)
+            if t_dir:
+                m = load_topic_manifest(t_dir)
+                if m:
+                    curriculum_nodes = m.get("nodes", [])
 
         for nid in isolated_node_ids:
             linked = False
@@ -1063,49 +1581,78 @@ def get_state() -> Dict[str, Any]:
 
 @app.post("/api/topic")
 def set_topic(req: TopicRequest) -> Dict[str, Any]:
+    topic_clean = req.topic.strip()
+    active_sess = get_active_session()
+    active_sess["active_topic"] = topic_clean
+    active_sess["phase"] = "probing"
+    active_sess["active_node_id"] = None
+    if req.reference_scope is not None:
+        active_sess["reference_scope"] = req.reference_scope
+    save_active_session(active_sess)
+
+    # Ensure topic directory and .diagnostic scratchpad exist
+    t_dir = get_topic_notes_dir(topic_clean)
+    if t_dir:
+        t_dir.mkdir(parents=True, exist_ok=True)
+        (t_dir / ".diagnostic").mkdir(parents=True, exist_ok=True)
+
     state = load_state()
-    state["topic"] = req.topic
-    state["phase"] = "probing"
-    if req.reference_scope is not None:
-        state["reference_scope"] = req.reference_scope
-    save_state(state)
-    topic_payload = {"topic": req.topic, "phase": "probing"}
-    if req.reference_scope is not None:
-        topic_payload["reference_scope"] = req.reference_scope
-    TOPIC_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(TOPIC_FILE, "w", encoding="utf-8") as f:
-        json.dump(topic_payload, f, indent=2)
     return {"status": "ok", "state": state}
 
 
 @app.get("/api/quiz")
 def get_quiz() -> Dict[str, Any]:
-    if not QUIZ_FILE.exists():
-        return {"questions": []}
-    try:
-        raw_text = QUIZ_FILE.read_text(encoding="utf-8").strip()
-        if not raw_text:
-            return {"questions": []}
-        return sanitize_and_normalize_quiz(raw_text)
-    except Exception:
-        return {"questions": []}
+    active_sess = get_active_session()
+    t_dir = get_active_topic_dir()
+    phase = active_sess.get("phase", "idle")
+
+    if t_dir:
+        target_f = (t_dir / ".diagnostic" / "diagnostic_quiz.json") if phase == "probing" else (t_dir / ".session" / "quiz.json")
+        if target_f.exists():
+            try:
+                raw_text = target_f.read_text(encoding="utf-8").strip()
+                if raw_text:
+                    return sanitize_and_normalize_quiz(raw_text)
+            except Exception:
+                pass
+
+    return {"questions": []}
 
 
 @app.post("/api/quiz")
 def set_quiz(req: QuizRequest) -> Dict[str, Any]:
     delete_pause_flag()
-    state = load_state()
-    state["active_quiz"] = {
+    quiz_dict = {
         "question": req.question,
         "options": req.options,
         "correct_idx": req.correct_idx,
         "explanation": req.explanation
     }
+
+    active_sess = get_active_session()
+    t_dir = get_active_topic_dir()
+    phase = active_sess.get("phase", "idle")
+
+    if t_dir:
+        if phase == "probing":
+            target_dir = t_dir / ".diagnostic"
+            target_f = target_dir / "diagnostic_quiz.json"
+        else:
+            target_dir = t_dir / ".session"
+            target_f = target_dir / "quiz.json"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(target_f, quiz_dict)
+
+        # Clear answer in session if exists
+        ans_f = t_dir / ".session" / "answer.json"
+        if ans_f.exists():
+            ans_f.unlink(missing_ok=True)
+
+    state = load_state()
+    state["active_quiz"] = quiz_dict
     state["latest_answer"] = None
     state["quiz_history"] = []
     save_state(state)
-    if ANSWER_FILE.exists():
-        ANSWER_FILE.unlink(missing_ok=True)
     return {"status": "ok", "state": state}
 
 
@@ -1113,14 +1660,24 @@ def set_quiz(req: QuizRequest) -> Dict[str, Any]:
 def submit_batch_quiz(req: BatchQuizSubmitRequest) -> Dict[str, Any]:
     delete_pause_flag()
     state = load_state()
-    active_quiz = state.get("active_quiz")
-    if not active_quiz and QUIZ_FILE.exists():
-        try:
-            content = QUIZ_FILE.read_text(encoding="utf-8").strip()
-            if content:
-                active_quiz = sanitize_and_normalize_quiz(content)
-        except Exception:
-            pass
+
+    t_dir = get_active_topic_dir()
+    active_sess = get_active_session()
+    phase = active_sess.get("phase", "idle")
+
+    active_quiz = None
+    if t_dir:
+        target_f = (t_dir / ".diagnostic" / "diagnostic_quiz.json") if phase == "probing" else (t_dir / ".session" / "quiz.json")
+        if target_f.exists():
+            try:
+                content = target_f.read_text(encoding="utf-8").strip()
+                if content:
+                    active_quiz = sanitize_and_normalize_quiz(content)
+            except Exception:
+                pass
+
+    if not active_quiz:
+        active_quiz = state.get("active_quiz")
 
     if not active_quiz:
         raise HTTPException(status_code=400, detail="No active quiz available to answer.")
@@ -1197,17 +1754,20 @@ def submit_batch_quiz(req: BatchQuizSubmitRequest) -> Dict[str, Any]:
             "timestamp": timestamp
         }
 
-    # Flush in-memory buffers
+    # Write evaluation atomically strictly to topic .session/ (or .diagnostic/)
+    if t_dir:
+        if phase == "probing":
+            diag_p = t_dir / ".diagnostic" / "baseline_passes.json"
+            t_dir.mkdir(parents=True, exist_ok=True)
+            (t_dir / ".diagnostic").mkdir(parents=True, exist_ok=True)
+            atomic_write_json(diag_p, evaluation)
+        sess_dir = t_dir / ".session"
+        sess_dir.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(sess_dir / "answer.json", evaluation)
+
     state["latest_answer"] = evaluation
     state["quiz_history"] = [evaluation]
     save_state(state)
-
-    # Purge stale buffers and atomically write evaluation payload to state/answer.json (.tmp -> replace)
-    ANSWER_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp_answer = ANSWER_FILE.with_name(f"{ANSWER_FILE.name}.tmp")
-    with open(tmp_answer, "w", encoding="utf-8") as f:
-        json.dump(evaluation, f, indent=2, ensure_ascii=False)
-    safe_replace(tmp_answer, ANSWER_FILE)
 
     return {"status": "ok", "evaluation": evaluation, "latest_answer": evaluation}
 
@@ -1249,44 +1809,45 @@ def submit_answer(req: AnswerRequest) -> Dict[str, Any]:
             "question": active_quiz.get("question", "")
         }
 
+    t_dir = get_active_topic_dir()
+    if t_dir:
+        sess_dir = t_dir / ".session"
+        sess_dir.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(sess_dir / "answer.json", answer_record)
+
     state["latest_answer"] = answer_record
     if "quiz_history" not in state or not isinstance(state["quiz_history"], list):
         state["quiz_history"] = []
     state["quiz_history"].append(answer_record)
     save_state(state)
 
-    ANSWER_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp_answer = ANSWER_FILE.with_name(f"{ANSWER_FILE.name}.tmp")
-    with open(tmp_answer, "w", encoding="utf-8") as f:
-        json.dump(answer_record, f, indent=2)
-    safe_replace(tmp_answer, ANSWER_FILE)
-
     return {"status": "ok", "latest_answer": answer_record}
 
 
 @app.get("/api/latest-answer")
 def get_latest_answer() -> Dict[str, Any]:
+    t_dir = get_active_topic_dir()
+    if t_dir:
+        active_sess = get_active_session()
+        target_ans = (t_dir / ".diagnostic" / "baseline_passes.json") if active_sess.get("phase") == "probing" else (t_dir / ".session" / "answer.json")
+        if target_ans.exists():
+            try:
+                data = json.loads(target_ans.read_text(encoding="utf-8"))
+                return {"latest_answer": data}
+            except Exception:
+                pass
     state = load_state()
     return {"latest_answer": state.get("latest_answer")}
 
 
 @app.post("/api/pause")
 def pause_session() -> Dict[str, Any]:
+    """Operational Guard 3: Atomically pause session, preserving .session/quiz.json intact."""
     create_pause_flag()
 
-    topic_data = {}
-    if TOPIC_FILE.exists():
-        try:
-            with open(TOPIC_FILE, "r", encoding="utf-8") as f:
-                topic_data = json.load(f)
-        except Exception:
-            topic_data = {}
-    topic_data["phase"] = "PAUSED"
-    TOPIC_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp_topic = TOPIC_FILE.with_name(f"{TOPIC_FILE.name}.tmp")
-    with open(tmp_topic, "w", encoding="utf-8") as f:
-        json.dump(topic_data, f, indent=2)
-    safe_replace(tmp_topic, TOPIC_FILE)
+    active_sess = get_active_session()
+    active_sess["phase"] = "PAUSED"
+    save_active_session(active_sess)
 
     state = load_state()
     state["phase"] = "PAUSED"
@@ -1309,12 +1870,6 @@ def append_lesson(req: LessonRequest) -> Dict[str, Any]:
     state = load_state()
     state["lesson_markdown"] = (state.get("lesson_markdown") or "") + req.markdown_chunk
     save_state(state)
-
-    # Append directly to notes/lesson_notes.md
-    NOTES_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(NOTES_FILE, "a", encoding="utf-8") as f:
-        f.write(req.markdown_chunk)
-
     return {"status": "ok", "state": state}
 
 
@@ -1376,21 +1931,16 @@ def get_node_note(node_id: str) -> Dict[str, Any]:
 
     state = load_state()
     active_topic = state.get("topic")
-    if (not active_topic or active_topic == "Not Set") and TOPIC_FILE.exists():
-        try:
-            with open(TOPIC_FILE, "r", encoding="utf-8") as f:
-                t_data = json.load(f)
-                active_topic = t_data.get("topic") or active_topic
-        except Exception:
-            pass
+
+    # Check active topic first if available
+    candidate_topics = []
+    if active_topic and active_topic != "Not Set":
+        candidate_topics.append(active_topic)
 
     meta_topics = node_meta.get("topics", []) if node_meta else []
-    candidate_topics = []
     for t in meta_topics:
         if t and t not in candidate_topics:
             candidate_topics.append(t)
-    if active_topic and active_topic not in candidate_topics and active_topic != "Not Set":
-        candidate_topics.append(active_topic)
 
     # A. Standalone files: check notes/<topic>/<concept_id>.md or notes/<concept_id>.md
     matched_file = None
@@ -1573,40 +2123,6 @@ def get_node_note(node_id: str) -> Dict[str, Any]:
                 except Exception:
                     pass
 
-    # C. Active workspace notes (notes/lesson_notes.md)
-    if NOTES_FILE.exists():
-        try:
-            txt = NOTES_FILE.read_text(encoding="utf-8")
-            sections = re.split(r'\n(?=##\s+)', txt)
-            for sec in sections:
-                sec_strip = sec.strip()
-                if not sec_strip:
-                    continue
-                lines = sec_strip.splitlines()
-                if not lines or not lines[0].startswith("##"):
-                    continue
-                raw_header = re.sub(r'^##\s+', '', lines[0]).strip()
-                if matches_section_header(raw_header):
-                    is_baseline = "baseline" in raw_header.lower()
-                    origin = "diagnostic" if is_baseline else ((node_meta.get("origin") if node_meta else None) or "curriculum")
-                    is_active = (
-                        clean_id == to_canonical_id(state.get("active_node_id", "")) or
-                        clean_id == to_canonical_id(state.get("active_node", ""))
-                    )
-                    status = "mastered" if is_baseline else ((node_meta.get("status") if node_meta else None) or ("active" if is_active else "mastered"))
-                    badge_label = "Baseline Knowledge" if is_baseline else ((node_meta.get("badge_label") if node_meta else None) or ("Active Lesson" if status == "active" else "Curriculum Mastered"))
-                    return {
-                        "found": True,
-                        "content": sec_strip,
-                        "id": node_id,
-                        "origin": origin,
-                        "badge_label": badge_label,
-                        "status": status,
-                        "title": clean_label(raw_header),
-                        "topic": (node_meta.get("topics", [""])[0] if node_meta and node_meta.get("topics") else (active_topic or ""))
-                    }
-        except Exception:
-            pass
 
     # D. Graph Fallback
     prereqs = []
@@ -1642,11 +2158,9 @@ def get_node_note(node_id: str) -> Dict[str, Any]:
 @app.get("/api/topics")
 def get_topics() -> Dict[str, Any]:
     try:
-        # Load knowledge graph for node count and topic enrichment
         kg = load_knowledge_graph()
         kg_nodes = kg.get("nodes", [])
 
-        # Accumulator for unique topics keyed by slug
         topics_by_slug: Dict[str, Dict[str, Any]] = {}
 
         # 1. Discover from notes/ directory
@@ -1660,37 +2174,84 @@ def get_topics() -> Dict[str, Any]:
                     completed_nodes = []
                     current_node = ""
                     updated_at = ""
+                    total_count = 0
+                    mastered_count = 0
+                    active_node = "None"
+                    domain = "General"
+                    all_nodes = []
 
-                    session_file = item / "session.json"
+                    # Check manifest.json first
+                    manifest_file = item / "manifest.json"
+                    if manifest_file.exists():
+                        try:
+                            m_data = json.loads(manifest_file.read_text(encoding="utf-8"))
+                            display_name = m_data.get("topic") or display_name
+                            domain = m_data.get("domain") or "General"
+                            m_nodes = m_data.get("nodes", [])
+                            total_count = len(m_nodes)
+                            all_nodes = [mn.get("title") or mn.get("label") or mn.get("id") for mn in m_nodes]
+                            for mn in m_nodes:
+                                st = str(mn.get("status", "")).lower()
+                                title = mn.get("title") or mn.get("label") or mn.get("id")
+                                if st in ("mastered", "completed"):
+                                    mastered_count += 1
+                                    completed_nodes.append(title)
+                                elif st == "active" and active_node == "None":
+                                    active_node = title
+                                    current_node = title
+                            mtime = manifest_file.stat().st_mtime
+                            updated_at = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+                        except Exception:
+                            pass
+
+                    # Fallback to session.json
+                    session_file = item / ".session" / "session.json"
+                    if not session_file.exists():
+                        session_file = item / "session.json"
                     if session_file.exists():
                         try:
-                            with open(session_file, "r", encoding="utf-8") as f:
-                                s_data = json.load(f)
-                                display_name = s_data.get("topic") or display_name
+                            s_data = json.loads(session_file.read_text(encoding="utf-8"))
+                            display_name = s_data.get("topic") or display_name
+                            domain = s_data.get("domain") or domain or "General"
+                            if not completed_nodes:
                                 completed_nodes = s_data.get("completed_nodes") or []
+                            if not current_node:
                                 current_node = s_data.get("current_node") or ""
+                            if not updated_at:
                                 updated_at = s_data.get("timestamp") or ""
                         except Exception:
                             pass
 
                     if not updated_at:
                         notes_file = item / "notes.md"
-                        target_f = session_file if session_file.exists() else notes_file
+                        target_f = manifest_file if manifest_file.exists() else (session_file if session_file.exists() else notes_file)
                         if target_f.exists():
                             mtime = target_f.stat().st_mtime
                             updated_at = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
                         else:
                             updated_at = datetime.now(timezone.utc).isoformat()
 
+                    if total_count == 0:
+                        total_count = len(completed_nodes)
+                        mastered_count = len(completed_nodes)
+
+                    if active_node == "None":
+                        active_node = current_node or "None"
+
+                    status = "completed" if (total_count > 0 and mastered_count >= total_count) else "in_progress"
+
                     topics_by_slug[slug] = {
                         "name": display_name,
                         "slug": slug,
+                        "domain": domain,
+                        "status": status,
+                        "nodes": all_nodes,
                         "completed_nodes": completed_nodes,
                         "current_node": current_node,
                         "updated_at": updated_at,
-                        "total_nodes": len(completed_nodes),
-                        "mastered_nodes": len(completed_nodes),
-                        "active_node": current_node or "None"
+                        "total_nodes": total_count,
+                        "mastered_nodes": mastered_count,
+                        "active_node": active_node
                     }
 
         # 2. Discover from state/knowledge_graph.json
@@ -1714,6 +2275,9 @@ def get_topics() -> Dict[str, Any]:
                     topics_by_slug[t_slug] = {
                         "name": t_str,
                         "slug": t_slug,
+                        "domain": "General",
+                        "status": "in_progress",
+                        "nodes": [],
                         "completed_nodes": [],
                         "current_node": "",
                         "updated_at": "",
@@ -1722,46 +2286,83 @@ def get_topics() -> Dict[str, Any]:
                         "active_node": "None"
                     }
 
-        # 3. Calculate statistics and active node for all topics
+        # 3. Enrich if manifest didn't provide node counts
         for slug, t_data in topics_by_slug.items():
-            nodes_for_topic = kg_topic_nodes.get(slug, [])
-            if nodes_for_topic:
-                total_count = len(nodes_for_topic)
-                mastered_count = sum(1 for n in nodes_for_topic if str(n.get("status", "")).lower() == "mastered")
-
-                # Find active node:
-                # 1. Any node with status == 'active'
-                # 2. Match session.json current_node if present
-                # 3. First node with status == 'planned'
-                # 4. Fallback to current_node or "None"
-                active_lbl = None
-                for n in nodes_for_topic:
-                    if str(n.get("status", "")).lower() == "active":
-                        active_lbl = n.get("label")
-                        break
-
-                if not active_lbl and t_data.get("current_node"):
-                    active_lbl = t_data.get("current_node")
-
-                if not active_lbl:
+            if t_data.get("total_nodes", 0) == 0:
+                nodes_for_topic = kg_topic_nodes.get(slug, [])
+                if nodes_for_topic:
+                    t_data["total_nodes"] = len(nodes_for_topic)
+                    t_data["mastered_nodes"] = sum(1 for n in nodes_for_topic if str(n.get("status", "")).lower() == "mastered")
+                    active_lbl = None
                     for n in nodes_for_topic:
-                        if str(n.get("status", "")).lower() == "planned":
+                        if str(n.get("status", "")).lower() == "active":
                             active_lbl = n.get("label")
                             break
-
-                t_data["total_nodes"] = total_count
-                t_data["mastered_nodes"] = mastered_count
-                t_data["active_node"] = active_lbl or t_data.get("current_node") or "None"
-            else:
-                if not t_data.get("active_node") or t_data.get("active_node") == "None":
-                    t_data["active_node"] = t_data.get("current_node") or "None"
+                    if not active_lbl and t_data.get("current_node"):
+                        active_lbl = t_data.get("current_node")
+                    if not active_lbl:
+                        for n in nodes_for_topic:
+                            if str(n.get("status", "")).lower() == "planned":
+                                active_lbl = n.get("label")
+                                break
+                    t_data["active_node"] = active_lbl or t_data.get("current_node") or "None"
+                    if not t_data.get("nodes"):
+                        t_data["nodes"] = [n.get("label") or n.get("id") for n in nodes_for_topic]
+                    tot = t_data["total_nodes"]
+                    mast = t_data["mastered_nodes"]
+                    t_data["status"] = "completed" if (tot > 0 and mast >= tot) else "in_progress"
 
         topic_list = list(topics_by_slug.values())
         topic_list.sort(key=lambda t: t.get("updated_at", ""), reverse=True)
         return {"topics": topic_list}
     except Exception:
-        # Defensively return 200 with empty list on any error
         return {"topics": []}
+
+
+@app.delete("/api/topics/{topic_name}")
+def delete_topic(topic_name: str) -> Dict[str, Any]:
+    cleaned = topic_name.strip()
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="Topic name must not be empty.")
+
+    target_dir = get_topic_notes_dir(cleaned)
+    if not target_dir or not target_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Topic '{cleaned}' not found.")
+
+    # 1. Purge notes/<topic_name>/ directory
+    shutil.rmtree(target_dir, ignore_errors=True)
+
+    # 2. Purge from state/knowledge_graph.json
+    try:
+        kg = load_knowledge_graph()
+        slug = sanitize_topic(cleaned)
+        modified_nodes = []
+        for n in kg.get("nodes", []):
+            topics = n.get("topics", [])
+            if isinstance(topics, str):
+                topics = [topics]
+            new_topics = [t for t in topics if sanitize_topic(str(t)) != slug and str(t).strip().lower() != cleaned.lower()]
+            if new_topics:
+                n["topics"] = new_topics
+                modified_nodes.append(n)
+        valid_ids = {n["id"] for n in modified_nodes}
+        modified_edges = [
+            e for e in kg.get("edges", [])
+            if e.get("source") in valid_ids and e.get("target") in valid_ids
+        ]
+        kg["nodes"] = modified_nodes
+        kg["edges"] = modified_edges
+        save_knowledge_graph(kg)
+    except Exception:
+        pass
+
+    # 3. If currently active, reset session
+    active_sess = get_active_session()
+    current_topic = active_sess.get("active_topic", "")
+    if current_topic and (sanitize_topic(current_topic) == sanitize_topic(cleaned) or current_topic.lower() == cleaned.lower()):
+        reset_state()
+
+    return {"status": "ok", "deleted": cleaned}
 
 
 @app.post("/api/topics/load")
@@ -1780,172 +2381,97 @@ def load_topic(req: TopicRequest) -> Dict[str, Any]:
         )
     sanitized = target_dir.name
 
-    # Restore notes.md
-    restored_notes = ""
-    if target_dir.exists() and (target_dir / "notes.md").exists():
-        shutil.copy2(target_dir / "notes.md", NOTES_FILE)
-        restored_notes = NOTES_FILE.read_text(encoding="utf-8")
+    manifest = load_topic_manifest(target_dir)
+    if not manifest:
+        manifest = synthesize_manifest_for_topic(target_dir)
+        save_topic_manifest(target_dir, manifest)
 
-    # Restore roadmap.mmd
-    restored_roadmap = ""
-    if target_dir.exists() and (target_dir / "roadmap.mmd").exists():
-        ROADMAP_FILE.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(target_dir / "roadmap.mmd", ROADMAP_FILE)
-        restored_roadmap = ROADMAP_FILE.read_text(encoding="utf-8")
+    restored_topic_name = manifest.get("topic") or topic_name
+    restored_ref_scope = manifest.get("reference_scope") or {"collection": "general", "tags": []}
 
-    # Restore or construct state/curriculum.json
-    archived_curr = target_dir / "curriculum.json"
-    CURRICULUM_FILE.parent.mkdir(parents=True, exist_ok=True)
-    if archived_curr.exists():
-        tmp_curr = CURRICULUM_FILE.with_name(f"{CURRICULUM_FILE.name}.tmp")
-        shutil.copy2(archived_curr, tmp_curr)
-        safe_replace(tmp_curr, CURRICULUM_FILE)
-    else:
-        min_nodes = []
-        kg = load_knowledge_graph()
-        kg_nodes = kg.get("nodes", [])
-        kg_edges = kg.get("edges", [])
-        topic_kg_nodes = [
-            n for n in kg_nodes
-            if sanitized in [sanitize_topic(str(t)) for t in (n.get("topics") or [])]
-        ]
-        if topic_kg_nodes:
-            prereq_map: Dict[str, List[str]] = {}
-            for e in kg_edges:
-                src = str(e.get("source", ""))
-                tgt = str(e.get("target", ""))
-                if tgt and src:
-                    prereq_map.setdefault(tgt, []).append(src)
-            for idx, n in enumerate(topic_kg_nodes):
-                nid = n.get("id") or f"node-{idx+1}"
-                nlbl = n.get("label") or nid
-                nst = str(n.get("status", "pending")).lower()
-                c_status = "completed" if nst == "mastered" else ("active" if nst == "active" else "pending")
-                badge = "Curriculum Mastered" if c_status == "completed" else ("In Progress" if c_status == "active" else "Pending")
-                min_nodes.append({
-                    "id": nid,
-                    "title": nlbl,
-                    "prerequisites": prereq_map.get(nid, []),
-                    "status": c_status,
-                    "badge_label": badge
-                })
-        elif session_data.get("completed_nodes"):
-            comp_nodes = session_data.get("completed_nodes", [])
-            for idx, cn in enumerate(comp_nodes):
-                nid = to_canonical_id(cn)
-                min_nodes.append({
-                    "id": nid,
-                    "title": cn,
-                    "prerequisites": [to_canonical_id(comp_nodes[idx-1])] if idx > 0 else [],
-                    "status": "completed",
-                    "badge_label": "Curriculum Mastered"
-                })
-            curr_n = session_data.get("current_node")
-            if curr_n and curr_n not in comp_nodes:
-                min_nodes.append({
-                    "id": to_canonical_id(curr_n),
-                    "title": curr_n,
-                    "prerequisites": [to_canonical_id(comp_nodes[-1])] if comp_nodes else [],
-                    "status": "active",
-                    "badge_label": "In Progress"
-                })
-
-        min_curriculum = {"nodes": min_nodes}
-        tmp_curr = CURRICULUM_FILE.with_name(f"{CURRICULUM_FILE.name}.tmp")
-        with open(tmp_curr, "w", encoding="utf-8") as f:
-            json.dump(min_curriculum, f, indent=2, ensure_ascii=False)
-        safe_replace(tmp_curr, CURRICULUM_FILE)
-
-    # Read session.json for metadata
-    session_data: Dict[str, Any] = {}
-    if target_dir.exists() and (target_dir / "session.json").exists():
-        try:
-            with open(target_dir / "session.json", "r", encoding="utf-8") as f:
-                session_data = json.load(f)
-        except Exception:
-            session_data = {}
-
-    restored_topic_name = session_data.get("topic") or topic_name
-    restored_current_node = session_data.get("current_node") or ""
-
-    # Reads state/knowledge_graph.json to find the active or next planned node
-    kg = load_knowledge_graph()
-    kg_nodes = kg.get("nodes", [])
-    active_node = None
-
-    # First look for active node
-    for node in kg_nodes:
-        node_topics = [sanitize_topic(str(t)) for t in (node.get("topics") or [])]
-        if sanitized in node_topics:
-            if str(node.get("status", "")).lower() == "active":
-                active_node = node.get("label")
+    # Find active node
+    active_node = ""
+    active_node_id = ""
+    nodes = manifest.get("nodes", [])
+    for n in nodes:
+        st = str(n.get("status", "")).lower()
+        if st in ("active", "in_progress"):
+            active_node = n.get("title") or n.get("label") or n.get("id")
+            active_node_id = n.get("id")
+            break
+    if not active_node:
+        for n in nodes:
+            st = str(n.get("status", "")).lower()
+            if st not in ("mastered", "completed"):
+                active_node = n.get("title") or n.get("label") or n.get("id")
+                active_node_id = n.get("id")
                 break
+    if not active_node and nodes:
+        active_node = nodes[-1].get("title") or nodes[-1].get("label") or nodes[-1].get("id")
+        active_node_id = nodes[-1].get("id")
 
-    # If no active node found in KG, look for next planned node
-    if not active_node:
-        for node in kg_nodes:
-            node_topics = [sanitize_topic(str(t)) for t in (node.get("topics") or [])]
-            if sanitized in node_topics:
-                if str(node.get("status", "")).lower() == "planned":
-                    active_node = node.get("label")
+    req_mode = getattr(req, "mode", "study") or "study"
+    phase = "reading" if req_mode == "read" else "teaching"
+
+    # Update active session
+    active_sess = get_active_session()
+    active_sess["active_topic"] = restored_topic_name
+    active_sess["phase"] = phase
+    active_sess["active_node_id"] = active_node_id
+    active_sess["reference_scope"] = restored_ref_scope
+    save_active_session(active_sess)
+
+    # Compile Mermaid DAG dynamically from manifest
+    compiled_dag = compile_mermaid_dag(manifest)
+
+    # Restore lesson notes: Guarantee restored_notes loads markdown from notes/<topic>/<active_node_id>.md
+    restored_notes = ""
+    cand_note_files = []
+    if active_node_id:
+        cand_note_files.append(target_dir / f"{active_node_id}.md")
+        cand_note_files.append(target_dir / f"{to_canonical_id(active_node_id)}.md")
+    if active_node:
+        cand_note_files.append(target_dir / f"{to_canonical_id(active_node)}.md")
+    cand_note_files.append(target_dir / "notes.md")
+
+    for cnf in cand_note_files:
+        if cnf.exists() and cnf.is_file():
+            try:
+                restored_notes = cnf.read_text(encoding="utf-8")
+                if restored_notes.strip():
                     break
+            except Exception:
+                pass
 
-    # Fallback to restored current_node or "None"
-    if not active_node:
-        active_node = restored_current_node or "None"
+    if not restored_notes.strip():
+        md_files = sorted([f for f in target_dir.glob("*.md") if f.is_file() and not f.name.startswith(".")])
+        if md_files:
+            try:
+                restored_notes = md_files[0].read_text(encoding="utf-8")
+            except Exception:
+                pass
 
-    # Update state/topic.json
-    TOPIC_FILE.parent.mkdir(parents=True, exist_ok=True)
-    topic_payload = {"topic": restored_topic_name, "phase": "teaching"}
-    restored_ref_scope = session_data.get("reference_scope")
-    if restored_ref_scope:
-        topic_payload["reference_scope"] = restored_ref_scope
-    tmp_top = TOPIC_FILE.with_name(f"{TOPIC_FILE.name}.tmp")
-    with open(tmp_top, "w", encoding="utf-8") as f:
-        json.dump(topic_payload, f, indent=2)
-    safe_replace(tmp_top, TOPIC_FILE)
+    # Purge any transient .session/ answer or quiz if starting anew in study mode
+    if req_mode != "read":
+        sess_dir = target_dir / ".session"
+        if sess_dir.exists():
+            (sess_dir / "answer.json").unlink(missing_ok=True)
 
-    # Clear answer and quiz
-    if ANSWER_FILE.exists():
-        ANSWER_FILE.unlink(missing_ok=True)
-    if QUIZ_FILE.exists():
-        try:
-            with open(QUIZ_FILE, "w", encoding="utf-8") as f:
-                json.dump({"questions": []}, f, indent=2)
-        except Exception:
-            pass
-
-    # Build and save new state
-    state = load_state()
-    state["session_active"] = True
-    state["topic"] = restored_topic_name
-    state["phase"] = "TEACHING"
-    state["dag_mermaid"] = restored_roadmap
-    state["lesson_markdown"] = restored_notes
-    state["notes"] = restored_notes
-    state["active_quiz"] = None
-    state["quiz"] = None
-    state["latest_answer"] = None
-    state["current_node"] = active_node
-    state["active_node"] = active_node
-    state["reference_scope"] = restored_ref_scope
-    save_state(state)
-
-    # Explicitly ensure state/state.json has the requested fields:
-    # { "session_active": true, "topic": topic, "phase": "TEACHING", "active_node": active_node_label }
     state_payload = {
+        "status": "active",
         "session_active": True,
         "topic": restored_topic_name,
-        "phase": "TEACHING",
+        "phase": phase,
         "active_node": active_node,
+        "active_node_id": active_node_id,
         "notes": restored_notes,
+        "lesson_markdown": restored_notes,
+        "manifest": manifest,
         "quiz": None,
-        "dag_mermaid": restored_roadmap
+        "dag_mermaid": compiled_dag,
+        "reference_scope": restored_ref_scope
     }
-    tmp_st = STATE_JSON_FILE.with_name(f"{STATE_JSON_FILE.name}.tmp")
-    with open(tmp_st, "w", encoding="utf-8") as f:
-        json.dump(state_payload, f, indent=2, ensure_ascii=False)
-    safe_replace(tmp_st, STATE_JSON_FILE)
+    save_state(state_payload)
 
     return {
         "success": True,
@@ -1958,37 +2484,13 @@ def archive_topic(req: Optional[ArchiveRequest] = None) -> Dict[str, Any]:
     topic_name = str(req.topic or "").strip() if req and req.topic else ""
     reference_scope = None
     if not topic_name:
-        # Read from state/topic.json
-        if TOPIC_FILE.exists():
-            try:
-                with open(TOPIC_FILE, "r", encoding="utf-8") as f:
-                    t_data = json.load(f)
-                    topic_name = str(t_data.get("topic") or "").strip()
-                    reference_scope = t_data.get("reference_scope")
-            except Exception:
-                pass
-    else:
-        if TOPIC_FILE.exists():
-            try:
-                with open(TOPIC_FILE, "r", encoding="utf-8") as f:
-                    t_data = json.load(f)
-                    reference_scope = t_data.get("reference_scope")
-            except Exception:
-                pass
+        active_sess = get_active_session()
+        topic_name = str(active_sess.get("active_topic") or "").strip()
+        reference_scope = active_sess.get("reference_scope")
 
     if not topic_name:
-        state = load_state()
-        topic_name = str(state.get("topic") or "").strip()
-        if not reference_scope:
-            reference_scope = state.get("reference_scope")
-    if not topic_name:
-        # If in standby, nothing to archive, reset and return skipped
         reset_state()
         return {"status": "skipped", "message": "Cannot archive empty or not-set topic"}
-
-    if not reference_scope:
-        state = load_state()
-        reference_scope = state.get("reference_scope")
 
     target_dir = get_topic_notes_dir(topic_name)
     if not target_dir:
@@ -1997,46 +2499,22 @@ def archive_topic(req: Optional[ArchiveRequest] = None) -> Dict[str, Any]:
     target_dir.mkdir(parents=True, exist_ok=True)
     sanitized = target_dir.name
 
-    # Move or copy current notes/lesson_notes.md to notes/<sanitized_topic>/notes.md
-    if NOTES_FILE.exists():
-        shutil.copy2(NOTES_FILE, target_dir / "notes.md")
+    # Purge .session directory
+    sess_dir = target_dir / ".session"
+    if sess_dir.exists():
+        shutil.rmtree(sess_dir, ignore_errors=True)
 
-    # If state/roadmap.mmd exists, copy it to notes/<sanitized_topic>/roadmap.mmd
-    if ROADMAP_FILE.exists():
-        shutil.copy2(ROADMAP_FILE, target_dir / "roadmap.mmd")
-
-    # If state/curriculum.json exists, atomically copy it to notes/<sanitized_topic>/curriculum.json
-    if CURRICULUM_FILE.exists():
-        archive_curr = target_dir / "curriculum.json"
-        tmp_curr = target_dir / "curriculum.json.tmp"
-        try:
-            shutil.copy2(CURRICULUM_FILE, tmp_curr)
-            safe_replace(tmp_curr, archive_curr)
-        except Exception:
-            try:
-                shutil.copy2(CURRICULUM_FILE, archive_curr)
-            except Exception:
-                pass
-
-    # Extract completed nodes and current node
+    # Extract completed nodes and current node from manifest
+    manifest = load_topic_manifest(target_dir)
     completed_nodes: List[str] = []
     current_node = ""
-    notes_path = target_dir / "notes.md"
-    if notes_path.exists():
-        try:
-            content = notes_path.read_text(encoding="utf-8")
-            # Look for top-level node headers like "## Node 1: ..." or "## ..."
-            node_matches = re.findall(r'^##(?!\#)\s+(?:Node\s*\d+:\s*)?([^\r\n]+)', content, flags=re.MULTILINE)
-            node_matches = [m.strip() for m in node_matches]
-            if node_matches:
-                completed_nodes = node_matches
-                current_node = completed_nodes[-1]
-        except Exception:
-            pass
-
-    state = load_state()
-    if state.get("current_node") and not current_node:
-        current_node = state["current_node"]
+    if manifest:
+        for n in manifest.get("nodes", []):
+            st = str(n.get("status", "")).lower()
+            if st in ("completed", "mastered"):
+                completed_nodes.append(n.get("title") or n.get("label") or n.get("id"))
+            elif st == "active" and not current_node:
+                current_node = n.get("title") or n.get("label") or n.get("id")
 
     session_data = {
         "topic": topic_name,
@@ -2046,124 +2524,11 @@ def archive_topic(req: Optional[ArchiveRequest] = None) -> Dict[str, Any]:
         "reference_scope": reference_scope,
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
-
     session_file = target_dir / "session.json"
     with open(session_file, "w", encoding="utf-8") as f:
         json.dump(session_data, f, indent=2, ensure_ascii=False)
 
-    # Automatically mark completed nodes for the archived topic as "mastered" in state/knowledge_graph.json
-    if completed_nodes:
-        try:
-            kg = load_knowledge_graph()
-            kg_nodes = kg.get("nodes", [])
-            kg_dirty = False
-            for c_node in completed_nodes:
-                c_lbl = clean_label(c_node)
-                c_key = c_lbl.lower()
-                c_cid = canonical_id(c_lbl)
-                matched = False
-                for node in kg_nodes:
-                    if node.get("id") == c_cid or clean_label(node.get("label", "")).lower() == c_key:
-                        node["status"] = "mastered"
-                        if topic_name and topic_name not in node.get("topics", []):
-                            node.setdefault("topics", []).append(topic_name)
-                        matched = True
-                        kg_dirty = True
-                        break
-                if not matched:
-                    fuzzy_id = find_fuzzy_concept_match(c_lbl, kg_nodes)
-                    if fuzzy_id:
-                        for node in kg_nodes:
-                            if node.get("id") == fuzzy_id:
-                                node["status"] = "mastered"
-                                if topic_name and topic_name not in node.get("topics", []):
-                                    node.setdefault("topics", []).append(topic_name)
-                                matched = True
-                                kg_dirty = True
-                                break
-                if not matched:
-                    kg_nodes.append({
-                        "id": c_cid,
-                        "label": c_lbl,
-                        "status": "mastered",
-                        "topics": [topic_name] if topic_name else []
-                    })
-                    kg_dirty = True
-            if kg_dirty:
-                kg["nodes"] = kg_nodes
-                save_knowledge_graph(kg)
-        except Exception:
-            pass
-
-    # Overwrite notes/lesson_notes.md with standard placeholder comment
-    NOTES_FILE.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with open(NOTES_FILE, "w", encoding="utf-8") as f:
-            f.write(DEFAULT_LESSON_NOTES_PLACEHOLDER)
-    except Exception:
-        pass
-
-    # Overwrite roadmap.mmd with the empty skeleton (graph TD\n)
-    ROADMAP_FILE.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with open(ROADMAP_FILE, "w", encoding="utf-8") as f:
-            f.write("graph TD\n")
-    except Exception:
-        pass
-
-    # Clear active quiz and answer
-    if QUIZ_FILE.exists():
-        try:
-            with open(QUIZ_FILE, "w", encoding="utf-8") as f:
-                json.dump({"questions": []}, f, indent=2)
-        except Exception:
-            pass
-    if ANSWER_FILE.exists():
-        try:
-            with open(ANSWER_FILE, "w", encoding="utf-8") as f:
-                json.dump({"status": "stopped"}, f, indent=2)
-        except Exception:
-            pass
-
-    # Write state/topic.json with standby skeleton
-    TOPIC_FILE.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with open(TOPIC_FILE, "w", encoding="utf-8") as f:
-            json.dump(DEFAULT_TOPIC_SKELETON, f, indent=2)
-    except Exception:
-        pass
-
-    # Write state/curriculum.json with skeleton
-    CURRICULUM_FILE.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with open(CURRICULUM_FILE, "w", encoding="utf-8") as f:
-            json.dump(DEFAULT_CURRICULUM_SKELETON, f, indent=2)
-    except Exception:
-        pass
-
-    delete_pause_flag()
-
-    # Set state["topic"] = None and state["status"] = "standby"
-    blank_state = {
-        "session_active": False,
-        "topic": None,
-        "status": "standby",
-        "phase": "idle",
-        "active_node": None,
-        "active_node_id": None,
-        "current_node": "",
-        "notes": "",
-        "lesson_markdown": "",
-        "dag_mermaid": "graph TD\n",
-        "quiz": None,
-        "active_quiz": None,
-        "latest_answer": None,
-        "quiz_history": []
-    }
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(blank_state, f, indent=2, ensure_ascii=False)
-
+    reset_state()
     return {"status": "ok", "archive_dir": str(target_dir), "session": session_data}
 
 
@@ -2180,74 +2545,22 @@ def restore_topic(req: RestoreRequest) -> Dict[str, Any]:
             status_code=404,
             detail=f"Topic archive '{topic_name}' not found. Available topics: {available}"
         )
-    sanitized = target_dir.name
 
-    # Restore notes.md into notes/lesson_notes.md
-    restored_notes = ""
-    if (target_dir / "notes.md").exists():
-        shutil.copy2(target_dir / "notes.md", NOTES_FILE)
-        restored_notes = NOTES_FILE.read_text(encoding="utf-8")
-
-    # Restore roadmap.mmd into state/roadmap.mmd
-    restored_roadmap = ""
-    if (target_dir / "roadmap.mmd").exists():
-        ROADMAP_FILE.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(target_dir / "roadmap.mmd", ROADMAP_FILE)
-        restored_roadmap = ROADMAP_FILE.read_text(encoding="utf-8")
-
-    # Read session.json
+    load_res = load_topic(TopicRequest(topic=topic_name, mode="study"))
     session_file = target_dir / "session.json"
     session_data = {}
     if session_file.exists():
         try:
-            with open(session_file, "r", encoding="utf-8") as f:
-                session_data = json.load(f)
+            session_data = json.loads(session_file.read_text(encoding="utf-8"))
         except Exception:
-            session_data = {}
+            pass
     if not session_data:
         session_data = {
             "topic": topic_name,
             "completed_nodes": [],
-            "current_node": "",
+            "current_node": load_res.get("state", {}).get("active_node", ""),
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
-
-    # Update state/topic.json with {"topic": "<topic>", "phase": "teaching"}
-    TOPIC_FILE.parent.mkdir(parents=True, exist_ok=True)
-    topic_payload = {"topic": session_data.get("topic", topic_name), "phase": "teaching"}
-    restored_ref_scope = session_data.get("reference_scope")
-    if restored_ref_scope:
-        topic_payload["reference_scope"] = restored_ref_scope
-    with open(TOPIC_FILE, "w", encoding="utf-8") as f:
-        json.dump(topic_payload, f, indent=2)
-
-    # Clear state/answer.json and state/quiz.json
-    if ANSWER_FILE.exists():
-        ANSWER_FILE.unlink(missing_ok=True)
-    if QUIZ_FILE.exists():
-        try:
-            with open(QUIZ_FILE, "w", encoding="utf-8") as f:
-                json.dump({"questions": []}, f, indent=2)
-        except Exception:
-            pass
-
-    # Update state.json
-    state = load_state()
-    state["session_active"] = True
-    state["topic"] = session_data.get("topic", topic_name)
-    state["phase"] = "teaching"
-    state["dag_mermaid"] = restored_roadmap
-    state["lesson_markdown"] = restored_notes
-    state["notes"] = restored_notes
-    state["active_quiz"] = None
-    state["quiz"] = None
-    state["latest_answer"] = None
-    state["current_node"] = session_data.get("current_node", "")
-    state["active_node"] = session_data.get("current_node", "")
-    state["reference_scope"] = restored_ref_scope
-    save_state(state)
-
-    # Return the contents of notes/<sanitized_topic>/session.json
     return session_data
 
 
@@ -2275,62 +2588,23 @@ def discard_topic(req: DiscardTopicRequest) -> Dict[str, Any]:
 @app.post("/api/reset")
 def reset_state() -> Dict[str, Any]:
     delete_pause_flag()
-    # Write {"status": "stopped"} to state/answer.json
-    ANSWER_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(ANSWER_FILE, "w", encoding="utf-8") as f:
-        json.dump({"status": "stopped"}, f, indent=2)
 
-    # Clear state/quiz.json
-    if QUIZ_FILE.exists():
-        try:
-            with open(QUIZ_FILE, "w", encoding="utf-8") as f:
-                json.dump({"questions": []}, f, indent=2)
-        except Exception:
-            pass
+    # Purge .session/ directory in active topic vault
+    active_sess = get_active_session()
+    active_topic = active_sess.get("active_topic")
+    if active_topic:
+        top_dir = get_active_topic_dir()
+        if top_dir and (top_dir / ".session").exists():
+            shutil.rmtree(top_dir / ".session", ignore_errors=True)
 
-    # Reset state/roadmap.mmd with valid default Mermaid class definition headers
-    ROADMAP_FILE.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with open(ROADMAP_FILE, "w", encoding="utf-8") as f:
-            f.write(DEFAULT_ROADMAP_SKELETON)
-    except Exception:
-        pass
+    # Reset active_session.json
+    save_active_session({
+        "active_topic": None,
+        "phase": "idle",
+        "active_node_id": None,
+        "reference_scope": {"collection": "general", "tags": []}
+    })
 
-    # Reset notes/lesson_notes.md with initial placeholder/comment
-    NOTES_FILE.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with open(NOTES_FILE, "w", encoding="utf-8") as f:
-            f.write(DEFAULT_LESSON_NOTES_PLACEHOLDER)
-    except Exception:
-        pass
-
-    # Write state/topic.json with valid initial skeleton structure
-    TOPIC_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(TOPIC_FILE, "w", encoding="utf-8") as f:
-        json.dump(DEFAULT_TOPIC_SKELETON, f, indent=2)
-
-    # Write state/curriculum.json with valid initial skeleton structure
-    CURRICULUM_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(CURRICULUM_FILE, "w", encoding="utf-8") as f:
-        json.dump(DEFAULT_CURRICULUM_SKELETON, f, indent=2)
-
-    # Write state/knowledge_graph.json if missing or cleared
-    KNOWLEDGE_GRAPH_FILE.parent.mkdir(parents=True, exist_ok=True)
-    if not KNOWLEDGE_GRAPH_FILE.exists() or KNOWLEDGE_GRAPH_FILE.stat().st_size == 0:
-        with open(KNOWLEDGE_GRAPH_FILE, "w", encoding="utf-8") as f:
-            json.dump(DEFAULT_KNOWLEDGE_GRAPH_SKELETON, f, indent=2)
-    else:
-        try:
-            with open(KNOWLEDGE_GRAPH_FILE, "r", encoding="utf-8") as f:
-                kg_data = json.load(f)
-            if not kg_data.get("nodes"):
-                with open(KNOWLEDGE_GRAPH_FILE, "w", encoding="utf-8") as f:
-                    json.dump(DEFAULT_KNOWLEDGE_GRAPH_SKELETON, f, indent=2)
-        except Exception:
-            with open(KNOWLEDGE_GRAPH_FILE, "w", encoding="utf-8") as f:
-                json.dump(DEFAULT_KNOWLEDGE_GRAPH_SKELETON, f, indent=2)
-
-    # Overwrite state/state.json with clean blank standby structure
     blank_state = {
         "session_active": False,
         "topic": None,
@@ -2347,11 +2621,6 @@ def reset_state() -> Dict[str, Any]:
         "latest_answer": None,
         "quiz_history": []
     }
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    full_state = DEFAULT_STATE.copy()
-    full_state.update(blank_state)
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(full_state, f, indent=2, ensure_ascii=False)
 
     return {
         "success": True,

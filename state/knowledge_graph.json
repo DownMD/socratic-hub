@@ -1,4 +1,1013 @@
 {
-  "nodes": [],
-  "edges": []
+  "nodes": [
+    {
+      "id": "topic-nominative-information-structure-wa-vs-ga",
+      "label": "Topic & Nominative Information Structure (Wa vs Ga)",
+      "status": "mastered",
+      "topics": [
+        "JLPT N5 Grammar & Syntax"
+      ]
+    },
+    {
+      "id": "prenominal-head-final-adjective-modification",
+      "label": "Prenominal Head-Final Adjective Modification",
+      "status": "mastered",
+      "topics": [
+        "JLPT N5 Grammar & Syntax"
+      ]
+    },
+    {
+      "id": "core-case-particles-wo-ni-de",
+      "label": "Core Case Particles (Wo, Ni, De)",
+      "status": "mastered",
+      "topics": [
+        "JLPT N5 Grammar & Syntax"
+      ]
+    },
+    {
+      "id": "directional-temporal-e-kara-made-to",
+      "label": "Directional & Temporal (E, Kara, Made, To)",
+      "status": "mastered",
+      "topics": [
+        "JLPT N5 Grammar & Syntax"
+      ]
+    },
+    {
+      "id": "nominal-conjunctions-no-ya-ka-mo",
+      "label": "Nominal Conjunctions (No, Ya, Ka, Mo)",
+      "status": "planned",
+      "topics": [
+        "JLPT N5 Grammar & Syntax"
+      ]
+    },
+    {
+      "id": "copular-predicates-da-desu",
+      "label": "Copular Predicates (Da / Desu)",
+      "status": "planned",
+      "topics": [
+        "JLPT N5 Grammar & Syntax"
+      ]
+    },
+    {
+      "id": "verbal-conjugation-classes-godan-ichidan",
+      "label": "Verbal Conjugation Classes (Godan/Ichidan)",
+      "status": "planned",
+      "topics": [
+        "JLPT N5 Grammar & Syntax"
+      ]
+    },
+    {
+      "id": "polite-verbal-conjugation-masu",
+      "label": "Polite Verbal Conjugation (-Masu)",
+      "status": "planned",
+      "topics": [
+        "JLPT N5 Grammar & Syntax"
+      ]
+    },
+    {
+      "id": "existential-predication-iru-vs-aru",
+      "label": "Existential Predication (Iru vs Aru)",
+      "status": "planned",
+      "topics": [
+        "JLPT N5 Grammar & Syntax"
+      ]
+    },
+    {
+      "id": "adjective-tense-inflection-i-vs-na",
+      "label": "Adjective Tense Inflection (I vs Na)",
+      "status": "planned",
+      "topics": [
+        "JLPT N5 Grammar & Syntax"
+      ]
+    },
+    {
+      "id": "adverbial-derivation-ku-ni-naru",
+      "label": "Adverbial Derivation (Ku / Ni Naru)",
+      "status": "planned",
+      "topics": [
+        "JLPT N5 Grammar & Syntax"
+      ]
+    },
+    {
+      "id": "verbal-te-form-onbin",
+      "label": "Verbal Te-Form & Onbin",
+      "status": "planned",
+      "topics": [
+        "JLPT N5 Grammar & Syntax"
+      ]
+    },
+    {
+      "id": "aspectual-syntax-te-iru",
+      "label": "Aspectual Syntax (Te Iru)",
+      "status": "planned",
+      "topics": [
+        "JLPT N5 Grammar & Syntax"
+      ]
+    },
+    {
+      "id": "deontic-modalities-kudasai-mo-ii-wa-ikenai",
+      "label": "Deontic Modalities (Kudasai, mo Ii, wa Ikenai)",
+      "status": "planned",
+      "topics": [
+        "JLPT N5 Grammar & Syntax"
+      ]
+    },
+    {
+      "id": "plain-inflection-paradigm-dict-nai-ta",
+      "label": "Plain Inflection Paradigm (Dict, Nai, Ta)",
+      "status": "planned",
+      "topics": [
+        "JLPT N5 Grammar & Syntax"
+      ]
+    },
+    {
+      "id": "desiderative-purposive-tai-ni-iku",
+      "label": "Desiderative & Purposive (-Tai, Ni Iku)",
+      "status": "planned",
+      "topics": [
+        "JLPT N5 Grammar & Syntax"
+      ]
+    },
+    {
+      "id": "clausal-subordination-kara-node-ga",
+      "label": "Clausal Subordination (Kara, Node, Ga)",
+      "status": "planned",
+      "topics": [
+        "JLPT N5 Grammar & Syntax"
+      ]
+    },
+    {
+      "id": "little-s-law",
+      "label": "Little's Law",
+      "status": "mastered",
+      "topics": [
+        "Process Analysis"
+      ]
+    },
+    {
+      "id": "multi-stage-flow-wip",
+      "label": "Multi-Stage Flow & WIP",
+      "status": "mastered",
+      "topics": [
+        "Process Analysis"
+      ]
+    },
+    {
+      "id": "processing-time-station-capacity",
+      "label": "Processing Time & Station Capacity",
+      "status": "mastered",
+      "topics": [
+        "Process Analysis",
+        "Manufacturing Strategy"
+      ]
+    },
+    {
+      "id": "cycle-time-takt-time",
+      "label": "Cycle Time & Takt Time",
+      "status": "planned",
+      "topics": [
+        "Process Analysis"
+      ]
+    },
+    {
+      "id": "bottleneck-identification",
+      "label": "Bottleneck Identification",
+      "status": "planned",
+      "topics": [
+        "Process Analysis"
+      ]
+    },
+    {
+      "id": "utilization-starvation-blocking",
+      "label": "Utilization, Starvation & Blocking",
+      "status": "planned",
+      "topics": [
+        "Process Analysis"
+      ]
+    },
+    {
+      "id": "line-balancing-balance-delay",
+      "label": "Line Balancing & Balance Delay",
+      "status": "planned",
+      "topics": [
+        "Process Analysis"
+      ]
+    },
+    {
+      "id": "process-variability-cv",
+      "label": "Process Variability (CV²)",
+      "status": "planned",
+      "topics": [
+        "Process Analysis"
+      ]
+    },
+    {
+      "id": "kingman-s-vut-equation",
+      "label": "Kingman's VUT Equation",
+      "status": "planned",
+      "topics": [
+        "Process Analysis"
+      ]
+    },
+    {
+      "id": "buffer-sizing-decoupling",
+      "label": "Buffer Sizing & Decoupling",
+      "status": "planned",
+      "topics": [
+        "Process Analysis"
+      ]
+    },
+    {
+      "id": "setups-batching-mechanics",
+      "label": "Setups & Batching Mechanics",
+      "status": "planned",
+      "topics": [
+        "Process Analysis"
+      ]
+    },
+    {
+      "id": "ebq-smed-reduction",
+      "label": "EBQ & SMED Reduction",
+      "status": "planned",
+      "topics": [
+        "Process Analysis"
+      ]
+    },
+    {
+      "id": "yield-losses-rework-loops",
+      "label": "Yield Losses & Rework Loops",
+      "status": "planned",
+      "topics": [
+        "Process Analysis"
+      ]
+    },
+    {
+      "id": "multi-product-mix-implied-utilization",
+      "label": "Multi-Product Mix & Implied Utilization",
+      "status": "planned",
+      "topics": [
+        "Process Analysis"
+      ]
+    },
+    {
+      "id": "dynamic-shifting-bottlenecks",
+      "label": "Dynamic & Shifting Bottlenecks",
+      "status": "planned",
+      "topics": [
+        "Process Analysis"
+      ]
+    },
+    {
+      "id": "theory-of-constraints-dbr",
+      "label": "Theory of Constraints & DBR",
+      "status": "planned",
+      "topics": [
+        "Process Analysis"
+      ]
+    },
+    {
+      "id": "soil-texture-porosity-drainage",
+      "label": "Soil Texture, Porosity & Drainage Dynamics",
+      "status": "mastered",
+      "topics": [
+        "Gardening"
+      ],
+      "origin": "diagnostic",
+      "badge_label": "Baseline Knowledge"
+    },
+    {
+      "id": "root-zone-aeration-hypoxia",
+      "label": "Root Zone Aeration & Hypoxia Mechanics",
+      "status": "mastered",
+      "topics": [
+        "Gardening"
+      ],
+      "origin": "diagnostic",
+      "badge_label": "Baseline Knowledge"
+    },
+    {
+      "id": "soil-organic-matter-microbiome",
+      "label": "Soil Organic Matter & Microbial Ecology",
+      "status": "mastered",
+      "topics": [
+        "Gardening"
+      ],
+      "origin": null,
+      "badge_label": null
+    },
+    {
+      "id": "cation-exchange-capacity-buffering",
+      "label": "Cation Exchange Capacity & Soil Buffering",
+      "status": "planned",
+      "topics": [
+        "Gardening"
+      ],
+      "origin": null,
+      "badge_label": null
+    },
+    {
+      "id": "soil-ph-macronutrient-bioavailability",
+      "label": "Soil pH & Primary Macronutrient Bioavailability",
+      "status": "planned",
+      "topics": [
+        "Gardening"
+      ],
+      "origin": null,
+      "badge_label": null
+    },
+    {
+      "id": "micronutrient-chelation-deficiency-diagnostics",
+      "label": "Micronutrient Dynamics & Deficiency Diagnostics",
+      "status": "planned",
+      "topics": [
+        "Gardening"
+      ],
+      "origin": null,
+      "badge_label": null
+    },
+    {
+      "id": "water-potential-xylem-transpiration-stream",
+      "label": "Water Potential & Xylem Transpiration Stream",
+      "status": "planned",
+      "topics": [
+        "Gardening"
+      ],
+      "origin": null,
+      "badge_label": null
+    },
+    {
+      "id": "vapor-pressure-deficit-stomatal-conductance",
+      "label": "Vapor Pressure Deficit & Stomatal Conductance",
+      "status": "planned",
+      "topics": [
+        "Gardening"
+      ],
+      "origin": null,
+      "badge_label": null
+    },
+    {
+      "id": "photosynthetically-active-radiation-dli",
+      "label": "PAR, PPFD & Daily Light Integral (DLI)",
+      "status": "planned",
+      "topics": [
+        "Gardening"
+      ],
+      "origin": null,
+      "badge_label": null
+    },
+    {
+      "id": "photoperiodism-phytochrome-floral-induction",
+      "label": "Photoperiodism & Phytochrome Floral Induction",
+      "status": "planned",
+      "topics": [
+        "Gardening"
+      ],
+      "origin": null,
+      "badge_label": null
+    },
+    {
+      "id": "seed-dormancy-stratification-germination",
+      "label": "Seed Dormancy, Stratification & Germination Mechanics",
+      "status": "planned",
+      "topics": [
+        "Gardening"
+      ],
+      "origin": null,
+      "badge_label": null
+    },
+    {
+      "id": "vegetative-propagation-auxin-adventitious-rooting",
+      "label": "Vegetative Propagation & Adventitious Rooting",
+      "status": "planned",
+      "topics": [
+        "Gardening"
+      ],
+      "origin": null,
+      "badge_label": null
+    },
+    {
+      "id": "apical-dominance-pruning-mechanics",
+      "label": "Apical Dominance, Auxin-Cytokinin Ratios & Pruning",
+      "status": "planned",
+      "topics": [
+        "Gardening"
+      ],
+      "origin": null,
+      "badge_label": null
+    },
+    {
+      "id": "grafting-cambium-alignment-callus-formation",
+      "label": "Vascular Cambium Alignment & Graft Callus Union",
+      "status": "planned",
+      "topics": [
+        "Gardening"
+      ],
+      "origin": null,
+      "badge_label": null
+    },
+    {
+      "id": "pest-vector-dynamics-beneficial-insect-ecology",
+      "label": "Pest-Vector Dynamics & Biological Controls",
+      "status": "planned",
+      "topics": [
+        "Gardening"
+      ],
+      "origin": null,
+      "badge_label": null
+    },
+    {
+      "id": "disease-triangle-fungal-pathology-management",
+      "label": "The Disease Triangle & Fungal Pathology Management",
+      "status": "planned",
+      "topics": [
+        "Gardening"
+      ],
+      "origin": null,
+      "badge_label": null
+    },
+    {
+      "id": "node-1-outputs",
+      "label": "Manufacturing Outputs & Competitive Dimensions",
+      "status": "mastered",
+      "topics": [
+        "Manufacturing Strategy"
+      ],
+      "origin": null,
+      "badge_label": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "topic-nominative-information-structure-wa-vs-ga",
+      "target": "core-case-particles-wo-ni-de",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "core-case-particles-wo-ni-de",
+      "target": "directional-temporal-e-kara-made-to",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "directional-temporal-e-kara-made-to",
+      "target": "nominal-conjunctions-no-ya-ka-mo",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "topic-nominative-information-structure-wa-vs-ga",
+      "target": "copular-predicates-da-desu",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "copular-predicates-da-desu",
+      "target": "verbal-conjugation-classes-godan-ichidan",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "verbal-conjugation-classes-godan-ichidan",
+      "target": "polite-verbal-conjugation-masu",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "core-case-particles-wo-ni-de",
+      "target": "existential-predication-iru-vs-aru",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "polite-verbal-conjugation-masu",
+      "target": "existential-predication-iru-vs-aru",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "prenominal-head-final-adjective-modification",
+      "target": "adjective-tense-inflection-i-vs-na",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "copular-predicates-da-desu",
+      "target": "adjective-tense-inflection-i-vs-na",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "adjective-tense-inflection-i-vs-na",
+      "target": "adverbial-derivation-ku-ni-naru",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "verbal-conjugation-classes-godan-ichidan",
+      "target": "verbal-te-form-onbin",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "existential-predication-iru-vs-aru",
+      "target": "aspectual-syntax-te-iru",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "verbal-te-form-onbin",
+      "target": "aspectual-syntax-te-iru",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "verbal-te-form-onbin",
+      "target": "deontic-modalities-kudasai-mo-ii-wa-ikenai",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "polite-verbal-conjugation-masu",
+      "target": "plain-inflection-paradigm-dict-nai-ta",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "verbal-te-form-onbin",
+      "target": "plain-inflection-paradigm-dict-nai-ta",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "core-case-particles-wo-ni-de",
+      "target": "desiderative-purposive-tai-ni-iku",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "polite-verbal-conjugation-masu",
+      "target": "desiderative-purposive-tai-ni-iku",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "adjective-tense-inflection-i-vs-na",
+      "target": "desiderative-purposive-tai-ni-iku",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "plain-inflection-paradigm-dict-nai-ta",
+      "target": "clausal-subordination-kara-node-ga",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "little-s-law",
+      "target": "multi-stage-flow-wip",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "multi-stage-flow-wip",
+      "target": "processing-time-station-capacity",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "processing-time-station-capacity",
+      "target": "cycle-time-takt-time",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "cycle-time-takt-time",
+      "target": "bottleneck-identification",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "bottleneck-identification",
+      "target": "utilization-starvation-blocking",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "utilization-starvation-blocking",
+      "target": "line-balancing-balance-delay",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "cycle-time-takt-time",
+      "target": "process-variability-cv",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "process-variability-cv",
+      "target": "kingman-s-vut-equation",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "utilization-starvation-blocking",
+      "target": "kingman-s-vut-equation",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "kingman-s-vut-equation",
+      "target": "buffer-sizing-decoupling",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "bottleneck-identification",
+      "target": "setups-batching-mechanics",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "setups-batching-mechanics",
+      "target": "ebq-smed-reduction",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "bottleneck-identification",
+      "target": "yield-losses-rework-loops",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "utilization-starvation-blocking",
+      "target": "multi-product-mix-implied-utilization",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "multi-product-mix-implied-utilization",
+      "target": "dynamic-shifting-bottlenecks",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "kingman-s-vut-equation",
+      "target": "dynamic-shifting-bottlenecks",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "dynamic-shifting-bottlenecks",
+      "target": "theory-of-constraints-dbr",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "buffer-sizing-decoupling",
+      "target": "theory-of-constraints-dbr",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "ebq-smed-reduction",
+      "target": "theory-of-constraints-dbr",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "soil-texture-porosity-drainage",
+      "target": "soil-organic-matter-microbiome",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "soil-organic-matter-microbiome",
+      "target": "cation-exchange-capacity-buffering",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "cation-exchange-capacity-buffering",
+      "target": "soil-ph-macronutrient-bioavailability",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "soil-ph-macronutrient-bioavailability",
+      "target": "micronutrient-chelation-deficiency-diagnostics",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "root-zone-aeration-hypoxia",
+      "target": "water-potential-xylem-transpiration-stream",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "water-potential-xylem-transpiration-stream",
+      "target": "vapor-pressure-deficit-stomatal-conductance",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "vapor-pressure-deficit-stomatal-conductance",
+      "target": "photosynthetically-active-radiation-dli",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "photosynthetically-active-radiation-dli",
+      "target": "photoperiodism-phytochrome-floral-induction",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "soil-texture-porosity-drainage",
+      "target": "seed-dormancy-stratification-germination",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "water-potential-xylem-transpiration-stream",
+      "target": "seed-dormancy-stratification-germination",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "seed-dormancy-stratification-germination",
+      "target": "vegetative-propagation-auxin-adventitious-rooting",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "vegetative-propagation-auxin-adventitious-rooting",
+      "target": "apical-dominance-pruning-mechanics",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "apical-dominance-pruning-mechanics",
+      "target": "grafting-cambium-alignment-callus-formation",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "soil-organic-matter-microbiome",
+      "target": "pest-vector-dynamics-beneficial-insect-ecology",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "apical-dominance-pruning-mechanics",
+      "target": "pest-vector-dynamics-beneficial-insect-ecology",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "vapor-pressure-deficit-stomatal-conductance",
+      "target": "disease-triangle-fungal-pathology-management",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "pest-vector-dynamics-beneficial-insect-ecology",
+      "target": "disease-triangle-fungal-pathology-management",
+      "relation": "prerequisite"
+    }
+  ],
+  "links": [
+    {
+      "source": "topic-nominative-information-structure-wa-vs-ga",
+      "target": "core-case-particles-wo-ni-de",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "core-case-particles-wo-ni-de",
+      "target": "directional-temporal-e-kara-made-to",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "directional-temporal-e-kara-made-to",
+      "target": "nominal-conjunctions-no-ya-ka-mo",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "topic-nominative-information-structure-wa-vs-ga",
+      "target": "copular-predicates-da-desu",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "copular-predicates-da-desu",
+      "target": "verbal-conjugation-classes-godan-ichidan",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "verbal-conjugation-classes-godan-ichidan",
+      "target": "polite-verbal-conjugation-masu",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "core-case-particles-wo-ni-de",
+      "target": "existential-predication-iru-vs-aru",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "polite-verbal-conjugation-masu",
+      "target": "existential-predication-iru-vs-aru",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "prenominal-head-final-adjective-modification",
+      "target": "adjective-tense-inflection-i-vs-na",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "copular-predicates-da-desu",
+      "target": "adjective-tense-inflection-i-vs-na",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "adjective-tense-inflection-i-vs-na",
+      "target": "adverbial-derivation-ku-ni-naru",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "verbal-conjugation-classes-godan-ichidan",
+      "target": "verbal-te-form-onbin",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "existential-predication-iru-vs-aru",
+      "target": "aspectual-syntax-te-iru",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "verbal-te-form-onbin",
+      "target": "aspectual-syntax-te-iru",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "verbal-te-form-onbin",
+      "target": "deontic-modalities-kudasai-mo-ii-wa-ikenai",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "polite-verbal-conjugation-masu",
+      "target": "plain-inflection-paradigm-dict-nai-ta",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "verbal-te-form-onbin",
+      "target": "plain-inflection-paradigm-dict-nai-ta",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "core-case-particles-wo-ni-de",
+      "target": "desiderative-purposive-tai-ni-iku",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "polite-verbal-conjugation-masu",
+      "target": "desiderative-purposive-tai-ni-iku",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "adjective-tense-inflection-i-vs-na",
+      "target": "desiderative-purposive-tai-ni-iku",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "plain-inflection-paradigm-dict-nai-ta",
+      "target": "clausal-subordination-kara-node-ga",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "little-s-law",
+      "target": "multi-stage-flow-wip",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "multi-stage-flow-wip",
+      "target": "processing-time-station-capacity",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "processing-time-station-capacity",
+      "target": "cycle-time-takt-time",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "cycle-time-takt-time",
+      "target": "bottleneck-identification",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "bottleneck-identification",
+      "target": "utilization-starvation-blocking",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "utilization-starvation-blocking",
+      "target": "line-balancing-balance-delay",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "cycle-time-takt-time",
+      "target": "process-variability-cv",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "process-variability-cv",
+      "target": "kingman-s-vut-equation",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "utilization-starvation-blocking",
+      "target": "kingman-s-vut-equation",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "kingman-s-vut-equation",
+      "target": "buffer-sizing-decoupling",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "bottleneck-identification",
+      "target": "setups-batching-mechanics",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "setups-batching-mechanics",
+      "target": "ebq-smed-reduction",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "bottleneck-identification",
+      "target": "yield-losses-rework-loops",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "utilization-starvation-blocking",
+      "target": "multi-product-mix-implied-utilization",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "multi-product-mix-implied-utilization",
+      "target": "dynamic-shifting-bottlenecks",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "kingman-s-vut-equation",
+      "target": "dynamic-shifting-bottlenecks",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "dynamic-shifting-bottlenecks",
+      "target": "theory-of-constraints-dbr",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "buffer-sizing-decoupling",
+      "target": "theory-of-constraints-dbr",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "ebq-smed-reduction",
+      "target": "theory-of-constraints-dbr",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "soil-texture-porosity-drainage",
+      "target": "soil-organic-matter-microbiome",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "soil-organic-matter-microbiome",
+      "target": "cation-exchange-capacity-buffering",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "cation-exchange-capacity-buffering",
+      "target": "soil-ph-macronutrient-bioavailability",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "soil-ph-macronutrient-bioavailability",
+      "target": "micronutrient-chelation-deficiency-diagnostics",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "root-zone-aeration-hypoxia",
+      "target": "water-potential-xylem-transpiration-stream",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "water-potential-xylem-transpiration-stream",
+      "target": "vapor-pressure-deficit-stomatal-conductance",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "vapor-pressure-deficit-stomatal-conductance",
+      "target": "photosynthetically-active-radiation-dli",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "photosynthetically-active-radiation-dli",
+      "target": "photoperiodism-phytochrome-floral-induction",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "soil-texture-porosity-drainage",
+      "target": "seed-dormancy-stratification-germination",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "water-potential-xylem-transpiration-stream",
+      "target": "seed-dormancy-stratification-germination",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "seed-dormancy-stratification-germination",
+      "target": "vegetative-propagation-auxin-adventitious-rooting",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "vegetative-propagation-auxin-adventitious-rooting",
+      "target": "apical-dominance-pruning-mechanics",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "apical-dominance-pruning-mechanics",
+      "target": "grafting-cambium-alignment-callus-formation",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "soil-organic-matter-microbiome",
+      "target": "pest-vector-dynamics-beneficial-insect-ecology",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "apical-dominance-pruning-mechanics",
+      "target": "pest-vector-dynamics-beneficial-insect-ecology",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "vapor-pressure-deficit-stomatal-conductance",
+      "target": "disease-triangle-fungal-pathology-management",
+      "relation": "prerequisite"
+    },
+    {
+      "source": "pest-vector-dynamics-beneficial-insect-ecology",
+      "target": "disease-triangle-fungal-pathology-management",
+      "relation": "prerequisite"
+    }
+  ]
 }
