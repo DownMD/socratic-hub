@@ -106,20 +106,28 @@ Socratic Hub structures learning around three core computational pillars:
 Socratic Hub contains no hardcoded subject domains. Its structural decomposition applies across any field:
 
 * Systems Engineering & Computer Science:
+  ```bash
   .teach Distributed Consensus and Raft Protocol
   .teach Linux eBPF Kernel Tracing
+  ```
 
 * Linguistics & Natural Languages:
+  ```bash
   .teach Mandarin Phonology and Tonal Contours
   .teach PIE Morphological Reconstruction
+  ```
 
 * Quantitative Finance & Economics:
+  ```bash
   .teach Black-Scholes Model and Option Greeks
   .teach Central Bank Liquidity Mechanics
+  ```
 
 * Biomedical & Natural Sciences:
+  ```bash
   .teach CRISPR-Cas9 Gene Editing Mechanisms
   .teach Organic Chemistry Stereochemistry
+  ```
 
 ---
 
@@ -130,10 +138,13 @@ Socratic Hub contains no hardcoded subject domains. Its structural decomposition
 * Git
 
 ### 1. Clone & Set Up Workspace
+```bash
 git clone https://github.com/DownMD/socratic-hub.git
 cd socratic-hub
+```
 
 Recommended: Create and activate a Python virtual environment:
+```bash
 # macOS/Linux
 python3 -m venv .venv
 source .venv/bin/activate
@@ -141,17 +152,24 @@ source .venv/bin/activate
 # Windows (PowerShell)
 python -m venv .venv
 .venv\Scripts\Activate.ps1
+```
 
 ### 2. Install Dependencies
+```bash
 python -m pip install -r requirements.txt
+```
 
 ### 3. Launch Local Server
 Start the local dashboard and API engine at http://localhost:8000:
+```bash
 python -m uvicorn server:app --host 127.0.0.1 --port 8000 --no-access-log
+```
 
 ### 4. Start Learning
 In your IDE's agent chat window (Antigravity, Cursor, Claude Code, or Windsurf), enter:
+```text
 .teach <topic>
+```
 
 ---
 
@@ -185,14 +203,14 @@ Detailed setup and troubleshooting instructions are provided in INIT.md.
 
 ## Architecture & Specifications
 
-Technical documentation is located in the .doc/ directory:
+Technical documentation is located in the [`.doc/`](.doc/) directory:
 
-* .doc/pedagogy_and_agents.md — Pedagogical framework, Amos Blomqvist framework, diagnostic budgets, and pedagogical blueprints.
-* .doc/roadmap_and_curriculum.md — DAG generation algorithm, topological sorting, prior knowledge scanning, and deduplication logic.
-* .doc/api_and_state.md — REST API endpoints, active session tracking, and vault manifest schemas.
-* .doc/architecture.md — IPC bridge mechanisms, file system state boundaries, and subagent verification pipelines.
-* .doc/frontend_guide.md — Real-time reactive dashboard, Knowledge Cosmos 2D graph renderer, and theme specifications.
-* .doc/maintenance.md — Vault synchronization, reference ingestion, and documentation generator scripts.
+* [`.doc/pedagogy_and_agents.md`](.doc/pedagogy_and_agents.md) — Pedagogical framework, Amos Blomqvist framework, diagnostic budgets, and pedagogical blueprints.
+* [`.doc/roadmap_and_curriculum.md`](.doc/roadmap_and_curriculum.md) — DAG generation algorithm, topological sorting, prior knowledge scanning, and deduplication logic.
+* [`.doc/api_and_state.md`](.doc/api_and_state.md) — REST API endpoints, active session tracking, and vault manifest schemas.
+* [`.doc/architecture.md`](.doc/architecture.md) — IPC bridge mechanisms, file system state boundaries, and subagent verification pipelines.
+* [`.doc/frontend_guide.md`](.doc/frontend_guide.md) — Real-time reactive dashboard, Knowledge Cosmos 2D graph renderer, and theme specifications.
+* [`.doc/maintenance.md`](.doc/maintenance.md) — Vault synchronization, reference ingestion, and documentation generator scripts.
 
 ---
 
